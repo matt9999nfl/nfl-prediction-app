@@ -52,14 +52,20 @@ def ingest_season(client: bigquery.Client, adapter: NflfastrAdapter, season: int
     df["season"] = season
     # nfl_detail_id changed from INTEGER to STRING in 2021+; always coerce to STRING
     # so BigQuery schema stays consistent across all partition seasons.
+    # We also pin the BQ field type explicitly in the job schema so autodetect cannot
+    # re-infer numeric string values ("12345") back to INTEGER.
     if "nfl_detail_id" in df.columns:
-        df["nfl_detail_id"] = df["nfl_detail_id"].astype(str).where(df["nfl_detail_id"].notna(), None)
+        df["nfl_detail_id"] = (
+            df["nfl_detail_id"]
+            .apply(lambda x: str(int(x)) if x is not None and str(x) not in ("nan", "None", "NaT", "<NA>") else None)
+        )
     df = normalize_dtypes(df)
 
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
         autodetect=True,
         schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
+        schema=[bigquery.SchemaField("nfl_detail_id", "STRING")],
     )
     full_table = f"{PROJECT}.{TABLE}${season}"
     job = client.load_table_from_dataframe(df, full_table, job_config=job_config)
