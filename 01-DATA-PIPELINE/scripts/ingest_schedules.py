@@ -50,6 +50,10 @@ def ingest_season(client: bigquery.Client, adapter: NflfastrAdapter, season: int
         return {"season": season, "rows": 0, "status": "VALIDATION_FAILED", "errors": result.errors}
 
     df["season"] = season
+    # nfl_detail_id changed from INTEGER to STRING in 2021+; always coerce to STRING
+    # so BigQuery schema stays consistent across all partition seasons.
+    if "nfl_detail_id" in df.columns:
+        df["nfl_detail_id"] = df["nfl_detail_id"].astype(str).where(df["nfl_detail_id"].notna(), None)
     df = normalize_dtypes(df)
 
     job_config = bigquery.LoadJobConfig(
