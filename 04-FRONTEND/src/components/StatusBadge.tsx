@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import type { DatasetStatus, ExperimentStatus } from '@/api/types'
 
-type AnyStatus = DatasetStatus | ExperimentStatus | 'running' | 'complete' | 'failed'
+type AnyStatus = DatasetStatus | ExperimentStatus | 'running' | 'complete' | 'failed' | 'scheduled' | 'final'
 
 const config: Record<AnyStatus, { label: string; variant: 'success' | 'warning' | 'info' | 'destructive' | 'muted' | 'secondary' }> = {
   // Dataset
@@ -14,6 +14,9 @@ const config: Record<AnyStatus, { label: string; variant: 'success' | 'warning' 
   running: { label: 'Running', variant: 'info' },
   complete: { label: 'Complete', variant: 'success' },
   failed: { label: 'Failed', variant: 'destructive' },
+  // Game
+  scheduled: { label: 'Scheduled', variant: 'info' },
+  final: { label: 'Final', variant: 'success' },
 }
 
 interface StatusBadgeProps {

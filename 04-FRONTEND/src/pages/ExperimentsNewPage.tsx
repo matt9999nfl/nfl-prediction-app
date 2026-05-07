@@ -19,7 +19,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useFeatures, useCreateExperiment } from '@/api/queries'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -196,7 +196,7 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
 
       {/* Step indicators */}
       <div className="flex items-center gap-1 overflow-x-auto pb-1">
-        {STEPS.map((label, i) => (
+        {STEPS.map((_label, i) => (
           <div key={i} className="flex items-center gap-1">
             <button
               type="button"
