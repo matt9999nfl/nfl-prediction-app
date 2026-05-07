@@ -9,6 +9,19 @@ logger = logging.getLogger(__name__)
 
 PROJECT = "nfl-model-471509"
 
+# Column name suffixes/exact names that identify player/entity ID columns.
+# In nflfastR data these start as int64 (simple numeric IDs in 2015) but
+# become UUID strings in later seasons.  We always store them as STRING so
+# BQ schema never conflicts across partitions.
+_ID_COL_SUFFIXES = ("_player_id", "_player_name", "nfl_detail_id")
+
+_NULL_STRINGS = {"nan", "None", "NaT", "<NA>", "none", "NaN"}
+
+
+def _is_id_column(col: str) -> bool:
+    lower = col.lower()
+    return any(lower.endswith(s) or lower == s for s in _ID_COL_SUFFIXES)
+
 
 def get_client() -> bigquery.Client:
     return bigquery.Client(project=PROJECT)
@@ -21,17 +34,41 @@ def normalize_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     matters more than native numeric types at this layer.
 
     Rules:
-    - object dtype  → string (catches mixed int/str columns like nfl_detail_id)
-    - float columns with only whole numbers stay float (BQ handles them fine)
-    - bool columns stay bool
-    - explicit int/float dtypes stay as-is
+    - object dtype            → string (existing behaviour)
+    - int64/float64 columns
+      whose names end in
+      _player_id / _player_name
+      or equal nfl_detail_id  → string  (these flip to UUID strings in 2021+)
+    - bool / other numeric    → left as-is
     """
     df = df.copy()
+    null_strings = _NULL_STRINGS
+
     for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].where(df[col].notna(), None)
+        series = df[col]
+
+        # ── Player / entity ID columns that can change numeric→UUID ──────────
+        if _is_id_column(col) and series.dtype.kind in ("i", "u", "f"):
+            # Capture nulls first (float64 can have NaN; int64 cannot)
+            null_mask = series.isna()
+            if series.dtype.kind in ("i", "u"):
+                # True int64 — safe to cast directly
+                df[col] = series.astype(str)
+            else:
+                # float64 — convert whole numbers cleanly: "1234.0" → "1234"
+                df[col] = series.apply(
+                    lambda x: str(int(x)) if pd.notna(x) else None
+                )
+            df.loc[null_mask, col] = None
+            df[col] = df[col].where(~df[col].isin(null_strings), None)
+            continue
+
+        # ── Standard object → string normalisation ───────────────────────────
+        if series.dtype == object:
+            df[col] = series.where(series.notna(), None)
             df[col] = df[col].astype(str)
-            df[col] = df[col].where(~df[col].isin(["nan", "None", "NaT", "<NA>"]), None)
+            df[col] = df[col].where(~df[col].isin(null_strings), None)
+
     return df
 
 
