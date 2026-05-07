@@ -1,0 +1,70 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - '05-DEVOPS/infra/terraform/**'
+      - '.github/workflows/tf-plan.yml'
+
+env:
+  PROJECT_ID: nfl-model-471509
+  REGION: us-central1
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        working-directory: 05-DEVOPS/infra/terraform
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: 05-DEVOPS/infra/terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: 05-DEVOPS/infra/terraform
+        run: terraform plan -out=tfplan
+
+      - name: Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('05-DEVOPS/infra/terraform/tfplan.json', 'utf8');
+            const comment = `## Terraform Plan\n\n\`\`\`\n${plan}\n\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment,
+            });
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan
+          path: 05-DEVOPS/infra/terraform/tfplan

@@ -1,0 +1,144 @@
+name: Deploy BACKEND-API
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '03-BACKEND-API/**'
+      - '.github/workflows/api-deploy.yml'
+
+env:
+  PROJECT_ID: nfl-model-471509
+  REGION: us-central1
+  SERVICE_NAME: nfl-backend-api
+  IMAGE_NAME: nfl-backend-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker to use gcloud for authentication
+        run: gcloud auth configure-docker
+
+      - name: Build Docker image
+        run: |
+          git_commit=$(git rev-parse --short HEAD)
+          docker build \
+            --build-arg GIT_COMMIT=$git_commit \
+            -t gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit \
+            -t gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:latest \
+            03-BACKEND-API/
+
+      - name: Push image to Container Registry
+        run: |
+          git_commit=$(git rev-parse --short HEAD)
+          docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit
+          docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy to Cloud Run (traffic at 0%)
+        run: |
+          git_commit=$(git rev-parse --short HEAD)
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit \
+            --region ${{ env.REGION }} \
+            --no-traffic \
+            --max-instances 3 \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 60 \
+            --concurrency 80 \
+            --set-env-vars=BIGQUERY_PROJECT=${{ env.PROJECT_ID }}
+
+      - name: Get new revision URL
+        id: revision
+        run: |
+          revision=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} \
+            --format='value(status.latestReadyRevisionName)')
+          url=$(gcloud run revisions describe $revision \
+            --region ${{ env.REGION }} \
+            --format='value(status.url)')
+          echo "revision=$revision" >> $GITHUB_OUTPUT
+          echo "url=$url" >> $GITHUB_OUTPUT
+
+      - name: Smoke test
+        id: smoke-test
+        run: |
+          url="${{ steps.revision.outputs.url }}"
+          echo "Testing $url/health"
+          
+          for i in {1..30}; do
+            response=$(curl -s -w "\n%{http_code}" "$url/health")
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | head -n-1)
+            
+            if [ "$http_code" = "200" ]; then
+              echo "✓ Health check passed: $body"
+              echo "smoke_test_passed=true" >> $GITHUB_OUTPUT
+              break
+            fi
+            
+            if [ $i -lt 30 ]; then
+              echo "Attempt $i/30: HTTP $http_code, retrying in 2s..."
+              sleep 2
+            fi
+          done
+          
+          if [ -z "${{ steps.smoke-test.outputs.smoke_test_passed }}" ]; then
+            echo "❌ Smoke test failed: /health not responding with 200"
+            exit 1
+          fi
+
+      - name: Test additional endpoints
+        run: |
+          url="${{ steps.revision.outputs.url }}"
+          
+          echo "Testing /api/v1/experiments..."
+          curl -s "$url/api/v1/experiments?limit=5" | grep -q '"data"' || exit 1
+          
+          echo "Testing /api/v1/features..."
+          curl -s "$url/api/v1/features" | grep -q '"data"' || exit 1
+          
+          echo "✓ All smoke tests passed"
+
+      - name: Shift traffic to new revision
+        run: |
+          gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} \
+            --to-revisions=LATEST=100
+
+      - name: Verify traffic shift
+        run: |
+          url="${{ steps.revision.outputs.url }}"
+          curl -s "$url/health" | grep -q '"status".*"ok"' || exit 1
+          echo "✓ Traffic shift verified"
+
+      - name: Send success notification
+        if: success()
+        run: |
+          echo "✓ Deployment successful"
+          echo "Service: https://console.cloud.google.com/run/detail/${{ env.REGION }}/${{ env.SERVICE_NAME }}"
+          echo "URL: ${{ steps.revision.outputs.url }}"
+
+      - name: Send failure notification
+        if: failure()
+        run: |
+          echo "❌ Deployment failed"
+          exit 1
