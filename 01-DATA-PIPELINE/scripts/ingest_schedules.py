@@ -55,10 +55,14 @@ def ingest_season(client: bigquery.Client, adapter: NflfastrAdapter, season: int
     # We also pin the BQ field type explicitly in the job schema so autodetect cannot
     # re-infer numeric string values ("12345") back to INTEGER.
     if "nfl_detail_id" in df.columns:
-        df["nfl_detail_id"] = (
-            df["nfl_detail_id"]
-            .apply(lambda x: str(int(x)) if x is not None and str(x) not in ("nan", "None", "NaT", "<NA>") else None)
-        )
+        # Capture nulls before conversion (isna() works on both int64 and object dtypes)
+        null_mask = df["nfl_detail_id"].isna()
+        # Cast to str — handles int64 "12345" for pre-2021 and UUID strings for 2021+
+        df["nfl_detail_id"] = df["nfl_detail_id"].astype(str)
+        # Restore genuine nulls (isna captures NaN/NaT/None; astype(str) turns them into "nan")
+        df.loc[null_mask, "nfl_detail_id"] = None
+        # Also clean up any stray string representations of null
+        df.loc[df["nfl_detail_id"].isin({"nan", "None", "NaT", "<NA>"}), "nfl_detail_id"] = None
     df = normalize_dtypes(df)
 
     job_config = bigquery.LoadJobConfig(
