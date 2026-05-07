@@ -13,7 +13,7 @@ This file is updated by agents as they complete deliverables. PROJECT-LEAD reads
 | Service | URL | Status |
 |---------|-----|--------|
 | BACKEND-API (Cloud Run) | https://nfl-backend-api-rmaehdhzhq-uc.a.run.app | ✅ Live |
-| FRONTEND (Cloud Storage + CDN) | _pending frontend deploy_ | 🔧 Code ready |
+| FRONTEND (Cloud Storage + CDN) | http://34.49.20.115 | ✅ Live |
 
 **Bootstrap Status:** ✅ Complete. All GCP infrastructure provisioned via Terraform on 2026-05-07.
 
@@ -25,7 +25,7 @@ This file is updated by agents as they complete deliverables. PROJECT-LEAD reads
 |---|-------------|--------|-------|
 | 1a | `nfl-backend-api` Cloud Run service deployed + healthy | ✅ Complete | Live at https://nfl-backend-api-rmaehdhzhq-uc.a.run.app — `/health` returning 200 |
 | 1b | CI pipeline for API deploys | ✅ Complete | `.github/workflows/api-deploy.yml` with smoke tests, traffic shift |
-| 2a | FRONTEND static site at HTTPS URL | 🔧 Code ready | Terraform + CDN provisioned; frontend files not yet deployed to bucket |
+| 2a | FRONTEND static site at HTTPS URL | ✅ Complete | Live at http://34.49.20.115 — Cloud CDN + GCS, files deployed via Cloud Build |
 | 2b | CI pipeline for frontend deploys | ✅ Complete | `.github/workflows/frontend-deploy.yml` with cache headers |
 | 3a | Experiment runner packaged as Cloud Run Job | ✅ Complete | `02-MODELING/Dockerfile.job`, Terraform job config ready |
 | 3b | BACKEND-API stub → real Cloud Run Job trigger | ✅ Complete | Real `trigger_experiment_runner()` function in experiments.py + router call updated |
