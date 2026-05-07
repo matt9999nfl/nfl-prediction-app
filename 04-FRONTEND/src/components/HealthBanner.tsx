@@ -9,7 +9,7 @@ export function HealthBanner() {
 
   const msg =
     error instanceof Error && error.message.includes('fetch')
-      ? 'Cannot reach the API — make sure the backend is running on localhost:8000.'
+      ? 'Cannot reach the API — the backend may be temporarily unavailable. Please try again shortly.'
       : `API health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`
 
   return (
