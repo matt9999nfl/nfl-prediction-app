@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Terraform providers (large binaries, not needed in repo)
+05-DEVOPS/infra/terraform/.terraform/providers/
+05-DEVOPS/infra/terraform/.terraform/terraform.tfstate
+
+# Logs
+*.log
+
+# Local env files
+.env
+.env.local
+
+# Node
+04-FRONTEND/node_modules/
+04-FRONTEND/dist/
+
+# Temp
+commit_msg.txt
+
+# OS
+.DS_Store
+Thumbs.db

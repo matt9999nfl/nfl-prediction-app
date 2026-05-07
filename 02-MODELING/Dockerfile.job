@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy dependency files and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY . .
+
+# Entry point: run_experiment.py reads EXPERIMENT_CONFIG_ID and NFL_RUN_ID from env
+CMD ["python", "backtests/run_experiment.py"]

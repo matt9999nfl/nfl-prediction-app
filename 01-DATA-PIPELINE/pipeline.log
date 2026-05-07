@@ -1,0 +1,369 @@
+2026-05-02 23:35:28,933 INFO Dataset ready: raw_nflfastr
+2026-05-02 23:35:29,627 INFO Dataset ready: raw_lines
+2026-05-02 23:35:30,303 INFO Dataset ready: curated
+2026-05-02 23:35:30,318 INFO 
+2026-05-02 23:35:30,318 INFO ============================================================
+2026-05-02 23:35:30,318 INFO   TASK 2 — raw_nflfastr.schedules
+2026-05-02 23:35:30,318 INFO ============================================================
+2026-05-02 23:35:30,660 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-02 23:35:31,089 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-02 23:35:31,089 INFO Fetching schedules for season 2015
+2026-05-02 23:35:37,792 INFO   ✓ raw_nflfastr.schedules$2015 — 267 rows
+2026-05-02 23:35:37,795 INFO Fetching schedules for season 2016
+2026-05-02 23:35:44,260 INFO   ✓ raw_nflfastr.schedules$2016 — 267 rows
+2026-05-02 23:35:44,260 INFO Fetching schedules for season 2017
+2026-05-02 23:35:51,332 INFO   ✓ raw_nflfastr.schedules$2017 — 267 rows
+2026-05-02 23:35:51,332 INFO Fetching schedules for season 2018
+2026-05-02 23:35:59,068 INFO   ✓ raw_nflfastr.schedules$2018 — 267 rows
+2026-05-02 23:35:59,068 INFO Fetching schedules for season 2019
+2026-05-02 23:36:06,281 INFO   ✓ raw_nflfastr.schedules$2019 — 267 rows
+2026-05-02 23:36:06,281 INFO Fetching schedules for season 2020
+2026-05-02 23:36:19,656 INFO   ✓ raw_nflfastr.schedules$2020 — 269 rows
+2026-05-02 23:36:19,656 INFO Fetching schedules for season 2021
+2026-05-03 16:34:34,403 INFO Dataset ready: raw_nflfastr
+2026-05-03 16:34:35,197 INFO Dataset ready: raw_lines
+2026-05-03 16:34:35,897 INFO Dataset ready: curated
+2026-05-03 16:34:35,897 INFO 
+2026-05-03 16:34:35,897 INFO ============================================================
+2026-05-03 16:34:35,897 INFO   TASK 2 — raw_nflfastr.schedules
+2026-05-03 16:34:35,897 INFO ============================================================
+2026-05-03 16:34:36,328 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:34:36,760 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:34:36,760 INFO Fetching all schedule seasons at once for consistent type inference...
+2026-05-03 16:34:44,130 INFO   ✓ raw_nflfastr.schedules$2015 — 267 rows
+2026-05-03 16:34:48,012 INFO   ✓ raw_nflfastr.schedules$2016 — 267 rows
+2026-05-03 16:34:53,279 INFO   ✓ raw_nflfastr.schedules$2017 — 267 rows
+2026-05-03 16:34:57,699 INFO   ✓ raw_nflfastr.schedules$2018 — 267 rows
+2026-05-03 16:35:02,631 INFO   ✓ raw_nflfastr.schedules$2019 — 267 rows
+2026-05-03 16:35:06,174 INFO   ✓ raw_nflfastr.schedules$2020 — 269 rows
+2026-05-03 16:38:42,995 INFO Dataset ready: raw_nflfastr
+2026-05-03 16:38:43,794 INFO Dataset ready: raw_lines
+2026-05-03 16:38:44,509 INFO Dataset ready: curated
+2026-05-03 16:38:44,509 INFO 
+2026-05-03 16:38:44,509 INFO ============================================================
+2026-05-03 16:38:44,509 INFO   TASK 2 - raw_nflfastr.schedules
+2026-05-03 16:38:44,509 INFO ============================================================
+2026-05-03 16:38:44,899 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:38:45,527 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:38:45,527 INFO Fetching all schedule seasons at once...
+2026-05-03 16:38:51,874 INFO   OK raw_nflfastr.schedules$2015 - 267 rows
+2026-05-03 16:38:56,037 INFO   OK raw_nflfastr.schedules$2016 - 267 rows
+2026-05-03 16:39:00,269 INFO   OK raw_nflfastr.schedules$2017 - 267 rows
+2026-05-03 16:39:03,933 INFO   OK raw_nflfastr.schedules$2018 - 267 rows
+2026-05-03 16:39:08,117 INFO   OK raw_nflfastr.schedules$2019 - 267 rows
+2026-05-03 16:39:12,614 INFO   OK raw_nflfastr.schedules$2020 - 269 rows
+2026-05-03 16:39:16,557 INFO   OK raw_nflfastr.schedules$2021 - 285 rows
+2026-05-03 16:39:21,271 INFO   OK raw_nflfastr.schedules$2022 - 284 rows
+2026-05-03 16:39:24,789 INFO   OK raw_nflfastr.schedules$2023 - 285 rows
+2026-05-03 16:39:29,700 INFO   OK raw_nflfastr.schedules$2024 - 285 rows
+2026-05-03 16:39:33,475 INFO   OK raw_nflfastr.schedules$2025 - 285 rows
+2026-05-03 16:39:33,476 INFO 
+2026-05-03 16:39:33,476 INFO ============================================================
+2026-05-03 16:39:33,476 INFO   TASK 4 - Closing Line Audit
+2026-05-03 16:39:33,476 INFO ============================================================
+2026-05-03 16:39:35,499 INFO 
+2026-05-03 16:39:35,499 INFO ============================================================
+2026-05-03 16:39:35,499 INFO   TASK 1 - raw_nflfastr.pbp  (slow step, ~20 min for all seasons)
+2026-05-03 16:39:35,499 INFO ============================================================
+2026-05-03 16:39:35,847 INFO Not found (skip drop): nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 16:39:36,295 INFO Table ready: nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 16:39:36,295 INFO   PBP 2015 - fetching...
+2026-05-03 16:39:36,295 INFO Fetching PBP for season 2015
+2026-05-03 16:41:09,564 INFO   OK raw_nflfastr.pbp$2015 - 48,122 rows
+2026-05-03 16:41:09,565 INFO   PBP 2016 - fetching...
+2026-05-03 16:41:09,565 INFO Fetching PBP for season 2016
+2026-05-03 16:41:43,536 INFO   OK raw_nflfastr.pbp$2016 - 47,651 rows
+2026-05-03 16:41:43,536 INFO   PBP 2017 - fetching...
+2026-05-03 16:41:43,536 INFO Fetching PBP for season 2017
+2026-05-03 16:44:28,441 INFO Dataset ready: raw_nflfastr
+2026-05-03 16:44:29,138 INFO Dataset ready: raw_lines
+2026-05-03 16:44:29,802 INFO Dataset ready: curated
+2026-05-03 16:44:29,802 INFO 
+2026-05-03 16:44:29,802 INFO ============================================================
+2026-05-03 16:44:29,803 INFO   TASK 2 - raw_nflfastr.schedules
+2026-05-03 16:44:29,803 INFO ============================================================
+2026-05-03 16:44:30,137 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:44:30,517 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:44:30,517 INFO Fetching all schedule seasons at once...
+2026-05-03 16:45:48,505 INFO Dataset ready: raw_nflfastr
+2026-05-03 16:45:49,206 INFO Dataset ready: raw_lines
+2026-05-03 16:45:49,906 INFO Dataset ready: curated
+2026-05-03 16:45:49,906 INFO 
+2026-05-03 16:45:49,906 INFO ============================================================
+2026-05-03 16:45:49,906 INFO   TASK 2 - raw_nflfastr.schedules
+2026-05-03 16:45:49,906 INFO ============================================================
+2026-05-03 16:45:50,221 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:45:50,737 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:45:50,737 INFO Fetching all schedule seasons at once...
+2026-05-03 16:45:56,914 INFO   OK raw_nflfastr.schedules$2015 - 267 rows
+2026-05-03 16:46:00,679 INFO   OK raw_nflfastr.schedules$2016 - 267 rows
+2026-05-03 16:46:05,195 INFO   OK raw_nflfastr.schedules$2017 - 267 rows
+2026-05-03 16:46:09,060 INFO   OK raw_nflfastr.schedules$2018 - 267 rows
+2026-05-03 16:46:14,177 INFO   OK raw_nflfastr.schedules$2019 - 267 rows
+2026-05-03 16:46:18,009 INFO   OK raw_nflfastr.schedules$2020 - 269 rows
+2026-05-03 16:46:22,765 INFO   OK raw_nflfastr.schedules$2021 - 285 rows
+2026-05-03 16:46:27,402 INFO   OK raw_nflfastr.schedules$2022 - 284 rows
+2026-05-03 16:46:31,476 INFO   OK raw_nflfastr.schedules$2023 - 285 rows
+2026-05-03 16:46:36,472 INFO   OK raw_nflfastr.schedules$2024 - 285 rows
+2026-05-03 16:46:41,106 INFO   OK raw_nflfastr.schedules$2025 - 285 rows
+2026-05-03 16:46:41,106 INFO 
+2026-05-03 16:46:41,106 INFO ============================================================
+2026-05-03 16:46:41,106 INFO   TASK 4 - Closing Line Audit
+2026-05-03 16:46:41,106 INFO ============================================================
+2026-05-03 16:46:43,370 INFO 
+2026-05-03 16:46:43,370 INFO ============================================================
+2026-05-03 16:46:43,370 INFO   TASK 1 - raw_nflfastr.pbp  (slow step, ~20 min for all seasons)
+2026-05-03 16:46:43,370 INFO ============================================================
+2026-05-03 16:46:43,711 INFO Dropped: nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 16:46:44,091 INFO Table ready: nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 16:46:44,091 INFO   PBP 2015 - fetching...
+2026-05-03 16:46:44,091 INFO Fetching PBP for season 2015
+2026-05-03 16:47:07,908 INFO Dataset ready: raw_nflfastr
+2026-05-03 16:47:08,707 INFO Dataset ready: raw_lines
+2026-05-03 16:47:09,407 INFO Dataset ready: curated
+2026-05-03 16:47:09,407 INFO 
+2026-05-03 16:47:09,407 INFO ============================================================
+2026-05-03 16:47:09,407 INFO   TASK 2 - raw_nflfastr.schedules
+2026-05-03 16:47:09,407 INFO ============================================================
+2026-05-03 16:47:09,757 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:47:10,140 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:47:10,140 INFO Fetching all schedule seasons at once...
+2026-05-03 16:47:12,156 INFO   OK raw_nflfastr.pbp$2015 - 48,122 rows
+2026-05-03 16:47:12,156 INFO   PBP 2016 - fetching...
+2026-05-03 16:47:12,156 INFO Fetching PBP for season 2016
+2026-05-03 16:47:17,391 INFO   OK raw_nflfastr.schedules$2015 - 267 rows
+2026-05-03 16:47:21,453 INFO   OK raw_nflfastr.schedules$2016 - 267 rows
+2026-05-03 16:47:26,042 INFO   OK raw_nflfastr.schedules$2017 - 267 rows
+2026-05-03 16:47:29,461 INFO   OK raw_nflfastr.schedules$2018 - 267 rows
+2026-05-03 16:47:33,066 INFO   OK raw_nflfastr.schedules$2019 - 267 rows
+2026-05-03 16:47:37,387 INFO   OK raw_nflfastr.schedules$2020 - 269 rows
+2026-05-03 16:47:41,262 INFO   OK raw_nflfastr.schedules$2021 - 285 rows
+2026-05-03 16:47:44,577 INFO   OK raw_nflfastr.pbp$2016 - 47,651 rows
+2026-05-03 16:47:44,577 INFO   PBP 2017 - fetching...
+2026-05-03 16:47:44,577 INFO Fetching PBP for season 2017
+2026-05-03 16:47:45,792 INFO   OK raw_nflfastr.schedules$2022 - 284 rows
+2026-05-03 16:47:51,069 INFO   OK raw_nflfastr.schedules$2023 - 285 rows
+2026-05-03 16:47:55,599 INFO   OK raw_nflfastr.schedules$2024 - 285 rows
+2026-05-03 16:47:59,672 INFO   OK raw_nflfastr.schedules$2025 - 285 rows
+2026-05-03 16:47:59,672 INFO 
+2026-05-03 16:47:59,672 INFO ============================================================
+2026-05-03 16:47:59,672 INFO   TASK 4 - Closing Line Audit
+2026-05-03 16:47:59,672 INFO ============================================================
+2026-05-03 16:48:01,942 INFO 
+2026-05-03 16:48:01,942 INFO ============================================================
+2026-05-03 16:48:01,942 INFO   TASK 1 - raw_nflfastr.pbp  (slow step, ~20 min for all seasons)
+2026-05-03 16:48:01,942 INFO ============================================================
+2026-05-03 16:48:02,330 INFO Dropped: nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 16:48:02,722 INFO Table ready: nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 16:48:02,722 INFO   PBP 2015 - fetching...
+2026-05-03 16:48:02,722 INFO Fetching PBP for season 2015
+2026-05-03 16:48:15,650 INFO   OK raw_nflfastr.pbp$2017 - 47,245 rows
+2026-05-03 16:48:15,663 INFO   PBP 2018 - fetching...
+2026-05-03 16:48:15,663 INFO Fetching PBP for season 2018
+2026-05-03 16:48:28,809 INFO   OK raw_nflfastr.pbp$2015 - 48,122 rows
+2026-05-03 16:48:28,810 INFO   PBP 2016 - fetching...
+2026-05-03 16:48:28,810 INFO Fetching PBP for season 2016
+2026-05-03 16:48:44,929 INFO   OK raw_nflfastr.pbp$2018 - 47,109 rows
+2026-05-03 16:48:44,930 INFO   PBP 2019 - fetching...
+2026-05-03 16:48:44,930 INFO Fetching PBP for season 2019
+2026-05-03 16:48:57,473 INFO   OK raw_nflfastr.pbp$2016 - 47,651 rows
+2026-05-03 16:48:57,473 INFO   PBP 2017 - fetching...
+2026-05-03 16:48:57,473 INFO Fetching PBP for season 2017
+2026-05-03 16:49:17,244 INFO   OK raw_nflfastr.pbp$2019 - 47,260 rows
+2026-05-03 16:49:17,244 INFO   PBP 2020 - fetching...
+2026-05-03 16:49:17,244 INFO Fetching PBP for season 2020
+2026-05-03 16:49:27,208 INFO   OK raw_nflfastr.pbp$2017 - 47,245 rows
+2026-05-03 16:49:27,208 INFO   PBP 2018 - fetching...
+2026-05-03 16:49:27,208 INFO Fetching PBP for season 2018
+2026-05-03 16:49:50,110 INFO   OK raw_nflfastr.pbp$2020 - 47,705 rows
+2026-05-03 16:49:50,110 INFO   PBP 2021 - fetching...
+2026-05-03 16:49:50,110 INFO Fetching PBP for season 2021
+2026-05-03 16:49:57,369 INFO   OK raw_nflfastr.pbp$2018 - 47,109 rows
+2026-05-03 16:49:57,370 INFO   PBP 2019 - fetching...
+2026-05-03 16:49:57,370 INFO Fetching PBP for season 2019
+2026-05-03 16:50:27,072 INFO   OK raw_nflfastr.pbp$2021 - 49,922 rows
+2026-05-03 16:50:27,072 INFO   PBP 2022 - fetching...
+2026-05-03 16:50:27,072 INFO Fetching PBP for season 2022
+2026-05-03 16:50:30,600 INFO   OK raw_nflfastr.pbp$2019 - 47,260 rows
+2026-05-03 16:50:30,600 INFO   PBP 2020 - fetching...
+2026-05-03 16:50:30,600 INFO Fetching PBP for season 2020
+2026-05-03 16:51:04,732 INFO   OK raw_nflfastr.pbp$2022 - 49,434 rows
+2026-05-03 16:51:04,732 INFO   PBP 2023 - fetching...
+2026-05-03 16:51:04,732 INFO Fetching PBP for season 2023
+2026-05-03 16:51:06,061 INFO   OK raw_nflfastr.pbp$2020 - 47,705 rows
+2026-05-03 16:51:06,062 INFO   PBP 2021 - fetching...
+2026-05-03 16:51:06,062 INFO Fetching PBP for season 2021
+2026-05-03 16:51:44,594 INFO   OK raw_nflfastr.pbp$2021 - 49,922 rows
+2026-05-03 16:51:44,595 INFO   PBP 2022 - fetching...
+2026-05-03 16:51:44,595 INFO Fetching PBP for season 2022
+2026-05-03 16:52:18,920 INFO   OK raw_nflfastr.pbp$2022 - 49,434 rows
+2026-05-03 16:52:18,920 INFO   PBP 2023 - fetching...
+2026-05-03 16:52:18,920 INFO Fetching PBP for season 2023
+2026-05-03 16:55:13,598 INFO Dataset ready: raw_nflfastr
+2026-05-03 16:55:15,414 INFO Dataset ready: raw_lines
+2026-05-03 16:55:16,162 INFO Dataset ready: curated
+2026-05-03 16:55:16,162 INFO 
+2026-05-03 16:55:16,162 INFO ============================================================
+2026-05-03 16:55:16,162 INFO   TASK 2 - raw_nflfastr.schedules
+2026-05-03 16:55:16,162 INFO ============================================================
+2026-05-03 16:55:16,528 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:55:16,930 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 16:55:16,931 INFO Fetching all schedule seasons at once...
+2026-05-03 16:55:24,945 INFO   OK raw_nflfastr.schedules$2015 - 267 rows
+2026-05-03 16:55:29,274 INFO   OK raw_nflfastr.schedules$2016 - 267 rows
+2026-05-03 16:55:33,903 INFO   OK raw_nflfastr.schedules$2017 - 267 rows
+2026-05-03 16:55:38,383 INFO   OK raw_nflfastr.schedules$2018 - 267 rows
+2026-05-03 16:55:42,995 INFO   OK raw_nflfastr.schedules$2019 - 267 rows
+2026-05-03 16:55:47,610 INFO   OK raw_nflfastr.schedules$2020 - 269 rows
+2026-05-03 16:55:51,239 INFO   OK raw_nflfastr.schedules$2021 - 285 rows
+2026-05-03 16:55:55,355 INFO   OK raw_nflfastr.schedules$2022 - 284 rows
+2026-05-03 16:56:02,085 INFO   OK raw_nflfastr.schedules$2023 - 285 rows
+2026-05-03 16:56:05,686 INFO   OK raw_nflfastr.schedules$2024 - 285 rows
+2026-05-03 16:56:09,615 INFO   OK raw_nflfastr.schedules$2025 - 285 rows
+2026-05-03 16:56:09,615 INFO 
+2026-05-03 16:56:09,615 INFO ============================================================
+2026-05-03 16:56:09,615 INFO   TASK 4 - Closing Line Audit
+2026-05-03 16:56:09,615 INFO ============================================================
+2026-05-03 16:56:11,898 INFO 
+2026-05-03 16:56:11,898 INFO ============================================================
+2026-05-03 16:56:11,898 INFO   TASK 1 - raw_nflfastr.pbp  (slow step, ~20 min for all seasons)
+2026-05-03 16:56:11,910 INFO ============================================================
+2026-05-03 16:56:12,644 INFO Table ready: nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 16:56:12,644 INFO   PBP 2015 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2016 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2017 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2018 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2019 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2020 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2021 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2022 - skipped (--pbp-start=2023)
+2026-05-03 16:56:12,644 INFO   PBP 2023 - fetching...
+2026-05-03 16:56:12,644 INFO Fetching PBP for season 2023
+2026-05-03 16:56:55,854 INFO   OK raw_nflfastr.pbp$2023 - 49,665 rows
+2026-05-03 16:56:55,854 INFO   PBP 2024 - fetching...
+2026-05-03 16:56:55,854 INFO Fetching PBP for season 2024
+2026-05-03 16:57:35,829 INFO   OK raw_nflfastr.pbp$2024 - 49,492 rows
+2026-05-03 16:57:35,829 INFO   PBP 2025 - fetching...
+2026-05-03 16:57:35,829 INFO Fetching PBP for season 2025
+2026-05-03 16:58:17,270 INFO   OK raw_nflfastr.pbp$2025 - 48,771 rows
+2026-05-03 16:58:17,270 INFO 
+2026-05-03 16:58:17,270 INFO ============================================================
+2026-05-03 16:58:17,270 INFO   TASK 3 - raw_nflfastr.rosters
+2026-05-03 16:58:17,270 INFO ============================================================
+2026-05-03 16:58:17,614 INFO Not found (skip drop): nfl-model-471509.raw_nflfastr.rosters
+2026-05-03 16:58:18,017 INFO Table ready: nfl-model-471509.raw_nflfastr.rosters
+2026-05-03 16:58:18,017 INFO Fetching all roster seasons at once...
+2026-05-03 16:58:42,320 INFO   OK raw_nflfastr.rosters$2015 - 32,098 rows
+2026-05-03 16:58:48,549 INFO   OK raw_nflfastr.rosters$2016 - 35,020 rows
+2026-05-03 16:58:54,480 INFO   OK raw_nflfastr.rosters$2017 - 51,321 rows
+2026-05-03 16:58:59,511 INFO   OK raw_nflfastr.rosters$2018 - 52,238 rows
+2026-05-03 16:59:05,441 INFO   OK raw_nflfastr.rosters$2019 - 51,632 rows
+2026-05-03 16:59:11,353 INFO   OK raw_nflfastr.rosters$2020 - 44,130 rows
+2026-05-03 16:59:18,232 INFO   OK raw_nflfastr.rosters$2021 - 46,696 rows
+2026-05-03 16:59:23,830 INFO   OK raw_nflfastr.rosters$2022 - 46,163 rows
+2026-05-03 16:59:28,832 INFO   OK raw_nflfastr.rosters$2023 - 45,655 rows
+2026-05-03 16:59:34,958 INFO   OK raw_nflfastr.rosters$2024 - 46,579 rows
+2026-05-03 16:59:40,135 INFO   OK raw_nflfastr.rosters$2025 - 46,849 rows
+2026-05-03 16:59:40,135 INFO 
+2026-05-03 16:59:40,135 INFO ============================================================
+2026-05-03 16:59:40,135 INFO   TASK 5 - curated.games
+2026-05-03 16:59:40,136 INFO ============================================================
+2026-05-03 16:59:40,437 INFO Not found (skip drop): nfl-model-471509.curated.games
+2026-05-03 16:59:40,817 INFO Table ready: nfl-model-471509.curated.games
+2026-05-03 17:00:44,298 INFO Dataset ready: raw_nflfastr
+2026-05-03 17:00:44,998 INFO Dataset ready: raw_lines
+2026-05-03 17:00:45,799 INFO Dataset ready: curated
+2026-05-03 17:00:45,799 INFO 
+2026-05-03 17:00:45,799 INFO ============================================================
+2026-05-03 17:00:45,799 INFO   TASK 2 - raw_nflfastr.schedules
+2026-05-03 17:00:45,799 INFO ============================================================
+2026-05-03 17:00:46,179 INFO Dropped: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 17:00:46,565 INFO Table ready: nfl-model-471509.raw_nflfastr.schedules
+2026-05-03 17:00:46,566 INFO Fetching all schedule seasons at once...
+2026-05-03 17:00:54,892 INFO   OK raw_nflfastr.schedules$2015 - 267 rows
+2026-05-03 17:01:00,021 INFO   OK raw_nflfastr.schedules$2016 - 267 rows
+2026-05-03 17:01:05,922 INFO   OK raw_nflfastr.schedules$2017 - 267 rows
+2026-05-03 17:01:10,042 INFO   OK raw_nflfastr.schedules$2018 - 267 rows
+2026-05-03 17:01:15,410 INFO   OK raw_nflfastr.schedules$2019 - 267 rows
+2026-05-03 17:01:21,175 INFO   OK raw_nflfastr.schedules$2020 - 269 rows
+2026-05-03 17:01:26,675 INFO   OK raw_nflfastr.schedules$2021 - 285 rows
+2026-05-03 17:01:32,167 INFO   OK raw_nflfastr.schedules$2022 - 284 rows
+2026-05-03 17:01:35,995 INFO   OK raw_nflfastr.schedules$2023 - 285 rows
+2026-05-03 17:01:40,068 INFO   OK raw_nflfastr.schedules$2024 - 285 rows
+2026-05-03 17:01:43,881 INFO   OK raw_nflfastr.schedules$2025 - 285 rows
+2026-05-03 17:01:43,881 INFO 
+2026-05-03 17:01:43,881 INFO ============================================================
+2026-05-03 17:01:43,881 INFO   TASK 4 - Closing Line Audit
+2026-05-03 17:01:43,881 INFO ============================================================
+2026-05-03 17:01:45,894 INFO 
+2026-05-03 17:01:45,894 INFO ============================================================
+2026-05-03 17:01:45,894 INFO   TASK 1 - raw_nflfastr.pbp  (slow step, ~20 min for all seasons)
+2026-05-03 17:01:45,894 INFO ============================================================
+2026-05-03 17:01:46,560 INFO Table ready: nfl-model-471509.raw_nflfastr.pbp
+2026-05-03 17:01:46,560 INFO   PBP 2015 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,574 INFO   PBP 2016 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,574 INFO   PBP 2017 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,575 INFO   PBP 2018 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,575 INFO   PBP 2019 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,575 INFO   PBP 2020 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,576 INFO   PBP 2021 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,576 INFO   PBP 2022 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,576 INFO   PBP 2023 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,577 INFO   PBP 2024 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,577 INFO   PBP 2025 - skipped (--pbp-start=2026)
+2026-05-03 17:01:46,577 INFO 
+2026-05-03 17:01:46,578 INFO ============================================================
+2026-05-03 17:01:46,578 INFO   TASK 3 - raw_nflfastr.rosters
+2026-05-03 17:01:46,578 INFO ============================================================
+2026-05-03 17:01:46,982 INFO Dropped: nfl-model-471509.raw_nflfastr.rosters
+2026-05-03 17:01:47,354 INFO Table ready: nfl-model-471509.raw_nflfastr.rosters
+2026-05-03 17:01:47,354 INFO Fetching all roster seasons at once...
+2026-05-03 17:02:08,213 INFO   OK raw_nflfastr.rosters$2015 - 32,098 rows
+2026-05-03 17:02:15,778 INFO   OK raw_nflfastr.rosters$2016 - 35,020 rows
+2026-05-03 17:02:22,282 INFO   OK raw_nflfastr.rosters$2017 - 51,321 rows
+2026-05-03 17:02:27,519 INFO   OK raw_nflfastr.rosters$2018 - 52,238 rows
+2026-05-03 17:02:33,065 INFO   OK raw_nflfastr.rosters$2019 - 51,632 rows
+2026-05-03 17:02:38,259 INFO   OK raw_nflfastr.rosters$2020 - 44,130 rows
+2026-05-03 17:02:42,997 INFO   OK raw_nflfastr.rosters$2021 - 46,696 rows
+2026-05-03 17:02:52,178 INFO   OK raw_nflfastr.rosters$2022 - 46,163 rows
+2026-05-03 17:02:57,402 INFO   OK raw_nflfastr.rosters$2023 - 45,655 rows
+2026-05-03 17:03:03,232 INFO   OK raw_nflfastr.rosters$2024 - 46,579 rows
+2026-05-03 17:03:09,128 INFO   OK raw_nflfastr.rosters$2025 - 46,849 rows
+2026-05-03 17:03:09,141 INFO 
+2026-05-03 17:03:09,142 INFO ============================================================
+2026-05-03 17:03:09,142 INFO   TASK 5 - curated.games
+2026-05-03 17:03:09,143 INFO ============================================================
+2026-05-03 17:03:09,551 INFO Dropped: nfl-model-471509.curated.games
+2026-05-03 17:03:09,907 INFO Table ready: nfl-model-471509.curated.games
+2026-05-03 17:03:16,373 INFO   OK curated.games$2015 - 256 REG games
+2026-05-03 17:03:25,930 INFO   OK curated.games$2016 - 256 REG games
+2026-05-03 17:03:32,182 INFO   OK curated.games$2017 - 256 REG games
+2026-05-03 17:03:38,359 INFO   OK curated.games$2018 - 256 REG games
+2026-05-03 17:03:44,374 INFO   OK curated.games$2019 - 256 REG games
+2026-05-03 17:03:50,518 INFO   OK curated.games$2020 - 256 REG games
+2026-05-03 17:03:57,916 INFO   OK curated.games$2021 - 272 REG games
+2026-05-03 17:04:05,558 INFO   OK curated.games$2022 - 271 REG games
+2026-05-03 17:04:11,706 INFO   OK curated.games$2023 - 272 REG games
+2026-05-03 17:04:17,487 INFO   OK curated.games$2024 - 272 REG games
+2026-05-03 17:04:22,644 INFO   OK curated.games$2025 - 272 REG games
+2026-05-03 17:04:22,644 INFO 
+2026-05-03 17:04:22,644 INFO ============================================================
+2026-05-03 17:04:22,644 INFO   TASK 6 - curated.plays
+2026-05-03 17:04:22,644 INFO ============================================================
+2026-05-03 17:04:23,017 INFO Not found (skip drop): nfl-model-471509.curated.plays
+2026-05-03 17:04:23,463 INFO Table ready: nfl-model-471509.curated.plays
+2026-05-03 17:04:57,377 INFO   OK curated.plays$2015 - 46,141 plays
+2026-05-03 17:05:29,894 INFO   OK curated.plays$2016 - 45,707 plays
+2026-05-03 17:06:01,508 INFO   OK curated.plays$2017 - 45,268 plays
+2026-05-03 17:06:33,317 INFO   OK curated.plays$2018 - 45,120 plays
+2026-05-03 17:07:07,299 INFO   OK curated.plays$2019 - 45,339 plays
+2026-05-03 17:07:38,334 INFO   OK curated.plays$2020 - 45,406 plays
+2026-05-03 17:08:11,746 INFO   OK curated.plays$2021 - 47,651 plays
+2026-05-03 17:08:45,272 INFO   OK curated.plays$2022 - 47,157 plays
+2026-05-03 17:09:17,953 INFO   OK curated.plays$2023 - 47,399 plays
+2026-05-03 17:09:50,537 INFO   OK curated.plays$2024 - 47,274 plays
+2026-05-03 17:10:25,589 INFO   OK curated.plays$2025 - 46,452 plays
+2026-05-03 17:10:25,589 INFO 
+2026-05-03 17:10:25,589 INFO ============================================================
+2026-05-03 17:10:25,590 INFO   PIPELINE COMPLETE
+2026-05-03 17:10:25,590 INFO ============================================================

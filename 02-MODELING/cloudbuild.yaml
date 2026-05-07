@@ -1,0 +1,11 @@
+steps:
+- name: gcr.io/cloud-builders/docker
+  args:
+  - build
+  - -t
+  - gcr.io/nfl-model-471509/nfl-experiment-runner:latest
+  - -f
+  - Dockerfile.job
+  - .
+images:
+- gcr.io/nfl-model-471509/nfl-experiment-runner:latest

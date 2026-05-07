@@ -1,0 +1,9 @@
+steps:
+- name: gcr.io/cloud-builders/docker
+  args:
+  - build
+  - -t
+  - gcr.io/nfl-model-471509/nfl-backend-api:latest
+  - .
+images:
+- gcr.io/nfl-model-471509/nfl-backend-api:latest
