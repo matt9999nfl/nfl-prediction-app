@@ -475,3 +475,73 @@ def get_run_status(
         completed_at=row.get("completed_at"),
         error=row.get("error_message"),
     )
+
+
+# ── POST /api/v1/experiments/{experiment_id}/cancel ──────────────────────────
+
+
+@router.post(
+    "/{experiment_id}/cancel",
+    response_model=ExperimentCreateResponse,
+    status_code=200,
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+    },
+    summary="Cancel a running experiment and reset it to failed",
+)
+def cancel_experiment(
+    experiment_id: str,
+    request: Request,
+    request_id: Annotated[str, Depends(get_request_id)],
+    bq: Annotated[bigquery.Client, Depends(get_bq_client)],
+    _: Annotated[None, Depends(require_api_key)],
+) -> ExperimentCreateResponse:
+    try:
+        config_row = eq.get_experiment_by_id(bq, experiment_id)
+    except Exception as exc:
+        logger.error(
+            "[%s] BigQuery error fetching experiment %s: %s",
+            request_id, experiment_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
+        )
+
+    if config_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": f"Experiment '{experiment_id}' not found",
+                "code": "not_found",
+                "request_id": request_id,
+            },
+        )
+
+    if config_row["status"] not in ("running",):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Experiment '{experiment_id}' is not running (status='{config_row['status']}')",
+                "code": "invalid_status",
+                "request_id": request_id,
+            },
+        )
+
+    try:
+        eq.set_experiment_status(bq, experiment_id, "failed")
+    except Exception as exc:
+        logger.error(
+            "[%s] BigQuery error cancelling experiment %s: %s",
+            request_id, experiment_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
+        )
+
+    logger.info("[%s] Cancelled experiment %s", request_id, experiment_id)
+    return ExperimentCreateResponse(experiment_id=experiment_id, status="failed")
