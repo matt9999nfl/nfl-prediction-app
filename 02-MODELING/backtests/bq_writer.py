@@ -5,17 +5,17 @@ Writes to two tables in the `experiments` dataset:
   experiments.backtest_runs        — one row per full backtest run
   experiments.backtest_predictions — one row per game per fold
 
-Schema matches MODELING_SPEC_PHASE1.md for Phase 1 columns.
-Phase 2 additions (PIPELINE_SCHEMA_MIGRATION_PHASE2.md):
-  backtest_runs gets six new columns:
-    experiment_config_id  STRING   NULLABLE  (added by DATA-PIPELINE migrate_phase2.py)
-    success_criteria      JSON     NULLABLE  (added by DATA-PIPELINE migrate_phase2.py)
-    folds_complete        INT64    NULLABLE  (added by _alter_runs_table_phase2 below)
-    folds_total           INT64    NULLABLE  (added by _alter_runs_table_phase2 below)
-    completed_at          TIMESTAMP NULLABLE (added by _alter_runs_table_phase2 below)
-    error_message         STRING   NULLABLE  (added by _alter_runs_table_phase2 below)
+Schema design (Phase 2+):
+  experiment_id  = the experiment config UUID (links to platform.experiment_configs)
+  run_id         = unique run identifier (NFL_RUN_ID from env, or runner-generated fallback)
 
-Tables are created (or altered) idempotently via setup_experiments_tables().
+  backtest_predictions also stores run_id so the API can join:
+    SELECT ... FROM backtest_predictions WHERE run_id = (
+        SELECT run_id FROM backtest_runs WHERE experiment_id = ? ORDER BY run_at DESC LIMIT 1
+    )
+
+Tables are created idempotently via setup_experiments_tables().
+Phase 2 ALTER TABLE calls are omitted — all columns exist in the current table schema.
 """
 
 import json
@@ -34,50 +34,39 @@ PREDS_TABLE = f"{PROJECT}.{DATASET}.backtest_predictions"
 
 
 # ── Schema definitions ────────────────────────────────────────────────────────
+#
+# experiment_id is ALWAYS the experiment config UUID (from platform.experiment_configs).
+# run_id        is a unique run identifier (NFL_RUN_ID env var or runner-generated).
+#
+# All metric fields are NULLABLE so partial/failed runs can still write a row.
 
 RUNS_SCHEMA = [
-    # ── Phase 1 columns (original) ────────────────────────────────────────────
+    bigquery.SchemaField("run_id",               "STRING",    mode="NULLABLE"),
     bigquery.SchemaField("experiment_id",        "STRING",    mode="REQUIRED"),
     bigquery.SchemaField("name",                 "STRING",    mode="REQUIRED"),
     bigquery.SchemaField("run_at",               "TIMESTAMP", mode="REQUIRED"),
+    bigquery.SchemaField("completed_at",         "TIMESTAMP", mode="NULLABLE"),
     bigquery.SchemaField("model_type",           "STRING",    mode="REQUIRED"),
-    bigquery.SchemaField("features",             "JSON",      mode="REQUIRED"),
-    bigquery.SchemaField("training_window_years","INT64",     mode="REQUIRED"),
-    bigquery.SchemaField("seasons_evaluated",    "JSON",      mode="REQUIRED"),
-    bigquery.SchemaField("ats_record_wins",      "INT64",     mode="REQUIRED"),
-    bigquery.SchemaField("ats_record_losses",    "INT64",     mode="REQUIRED"),
-    bigquery.SchemaField("ats_record_pushes",    "INT64",     mode="REQUIRED"),
-    bigquery.SchemaField("ats_hit_rate",         "FLOAT64",   mode="REQUIRED"),
-    bigquery.SchemaField("n_games_evaluated",    "INT64",     mode="REQUIRED"),
-    bigquery.SchemaField("gate_passed",          "BOOL",      mode="REQUIRED"),
-    bigquery.SchemaField("notes",                "STRING",    mode="NULLABLE"),
-    # ── Phase 2 columns — added by DATA-PIPELINE migrate_phase2.py ───────────
-    bigquery.SchemaField("experiment_config_id", "STRING",    mode="NULLABLE"),
-    bigquery.SchemaField("success_criteria",     "JSON",      mode="NULLABLE"),
-    # ── Phase 2 columns — added by _alter_runs_table_phase2() below ──────────
+    bigquery.SchemaField("features",             "JSON",      mode="NULLABLE"),
+    bigquery.SchemaField("status",               "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("ats_hit_rate",         "FLOAT64",   mode="NULLABLE"),
+    bigquery.SchemaField("ats_record_wins",      "INT64",     mode="NULLABLE"),
+    bigquery.SchemaField("ats_record_losses",    "INT64",     mode="NULLABLE"),
+    bigquery.SchemaField("ats_record_pushes",    "INT64",     mode="NULLABLE"),
+    bigquery.SchemaField("n_games_evaluated",    "INT64",     mode="NULLABLE"),
+    bigquery.SchemaField("gate_passed",          "BOOL",      mode="NULLABLE"),
+    bigquery.SchemaField("training_window_years","INT64",     mode="NULLABLE"),
+    bigquery.SchemaField("seasons_evaluated",    "JSON",      mode="NULLABLE"),
     bigquery.SchemaField("folds_complete",       "INT64",     mode="NULLABLE"),
     bigquery.SchemaField("folds_total",          "INT64",     mode="NULLABLE"),
-    bigquery.SchemaField("completed_at",         "TIMESTAMP", mode="NULLABLE"),
     bigquery.SchemaField("error_message",        "STRING",    mode="NULLABLE"),
-    # ── Phase 3 columns — added by _alter_runs_table_phase3() below ──────────
+    bigquery.SchemaField("notes",                "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("success_criteria",     "JSON",      mode="NULLABLE"),
     bigquery.SchemaField("feature_importances",  "JSON",      mode="NULLABLE"),
 ]
 
-# Columns that _alter_runs_table_phase2() must ADD to the live table.
-# experiment_config_id and success_criteria were already added by DATA-PIPELINE.
-_PHASE2_NEW_COLUMNS: list[tuple[str, str]] = [
-    ("folds_complete", "INT64"),
-    ("folds_total",    "INT64"),
-    ("completed_at",   "TIMESTAMP"),
-    ("error_message",  "STRING"),
-]
-
-# Columns that _alter_runs_table_phase3() must ADD to the live table.
-_PHASE3_NEW_COLUMNS: list[tuple[str, str]] = [
-    ("feature_importances", "JSON"),
-]
-
 PREDS_SCHEMA = [
+    bigquery.SchemaField("run_id",                    "STRING",  mode="NULLABLE"),
     bigquery.SchemaField("experiment_id",             "STRING",  mode="REQUIRED"),
     bigquery.SchemaField("fold",                      "INT64",   mode="REQUIRED"),
     bigquery.SchemaField("game_id",                   "STRING",  mode="REQUIRED"),
@@ -94,50 +83,20 @@ PREDS_SCHEMA = [
 ]
 
 
-def _alter_runs_table_phase2(client: bigquery.Client) -> None:
+def _alter_predictions_table(client: bigquery.Client) -> None:
     """
-    Idempotently add the four Phase 2 columns to experiments.backtest_runs.
-
-    BigQuery's create_table(exists_ok=True) does NOT add columns to an
-    existing table, so we issue explicit ALTER TABLE … ADD COLUMN IF NOT EXISTS
-    statements.  Safe to call repeatedly — BigQuery silently skips columns
-    that already exist.
+    Idempotently add run_id to experiments.backtest_predictions.
+    Safe to call repeatedly — BigQuery skips columns that already exist.
     """
-    for col_name, col_type in _PHASE2_NEW_COLUMNS:
-        ddl = (
-            f"ALTER TABLE `{RUNS_TABLE}` "
-            f"ADD COLUMN IF NOT EXISTS `{col_name}` {col_type}"
-        )
-        try:
-            client.query(ddl).result()
-            logger.info(f"backtest_runs: ensured column {col_name} ({col_type})")
-        except Exception as e:
-            # Log but don't hard-fail — column may already exist in a form BQ
-            # considers incompatible with the IF NOT EXISTS path.
-            logger.warning(f"backtest_runs: ALTER TABLE for {col_name} raised: {e}")
-
-
-def _alter_runs_table_phase3(client: bigquery.Client) -> None:
-    """
-    Idempotently add the Phase 3 columns to experiments.backtest_runs.
-
-    BigQuery's create_table(exists_ok=True) does NOT add columns to an
-    existing table, so we issue explicit ALTER TABLE … ADD COLUMN IF NOT EXISTS
-    statements.  Safe to call repeatedly — BigQuery silently skips columns
-    that already exist.
-    """
-    for col_name, col_type in _PHASE3_NEW_COLUMNS:
-        ddl = (
-            f"ALTER TABLE `{RUNS_TABLE}` "
-            f"ADD COLUMN IF NOT EXISTS `{col_name}` {col_type}"
-        )
-        try:
-            client.query(ddl).result()
-            logger.info(f"backtest_runs: ensured column {col_name} ({col_type})")
-        except Exception as e:
-            # Log but don't hard-fail — column may already exist in a form BQ
-            # considers incompatible with the IF NOT EXISTS path.
-            logger.warning(f"backtest_runs: ALTER TABLE for {col_name} raised: {e}")
+    ddl = (
+        f"ALTER TABLE `{PREDS_TABLE}` "
+        f"ADD COLUMN IF NOT EXISTS `run_id` STRING"
+    )
+    try:
+        client.query(ddl).result()
+        logger.info("backtest_predictions: ensured column run_id (STRING)")
+    except Exception as e:
+        logger.warning(f"backtest_predictions: ALTER TABLE for run_id raised: {e}")
 
 
 def _ensure_dataset(client: bigquery.Client) -> None:
@@ -172,48 +131,55 @@ def write_backtest_run(
     features_used: list[str],
     notes: str = "",
     training_window_years: int = 4,
-    # Phase 2 fields — all optional so Phase 1 runner works unchanged
+    # Identity fields — experiment_config_id is the config UUID from experiment_configs
+    run_id: str | None = None,
     experiment_config_id: str | None = None,
     success_criteria: dict | None = None,
     folds_complete: int | None = None,
     folds_total: int | None = None,
     completed_at=None,                # datetime; defaults to now()
     error_message: str | None = None,
-    # Phase 3 fields
     feature_importances: dict | None = None,
 ) -> None:
     """Insert one row into experiments.backtest_runs.
 
-    Phase 1 callers omit all keyword arguments after ``notes``.
-    Phase 2 config-driven callers pass the additional fields.
-    Phase 3 callers can pass feature_importances dict.
+    experiment_id in the written row is set to experiment_config_id (the config UUID)
+    when provided, so the API's WHERE experiment_id = <config UUID> queries find it.
+
+    run_id is the NFL_RUN_ID passed from the API (or the runner's internal ID as fallback).
+    It is also written to backtest_predictions so the API can join the two tables.
     """
     test_seasons = [fr.test_season for fr in result.folds]
 
+    # experiment_id in backtest_runs must be the config UUID so the API can find it.
+    # Fall back to result.experiment_id (runner's internal ID) for Phase 1 compatibility.
+    experiment_id_to_write = experiment_config_id or result.experiment_id
+
+    # run_id uniquely identifies this run; used as the join key to backtest_predictions.
+    run_id_to_write = run_id or result.experiment_id
+
     row = {
-        # Phase 1 columns
-        "experiment_id":         result.experiment_id,
+        "run_id":                run_id_to_write,
+        "experiment_id":         experiment_id_to_write,
         "name":                  result.name,
         "run_at":                datetime.now(timezone.utc),
+        "completed_at":          completed_at or datetime.now(timezone.utc),
         "model_type":            "xgboost",
         "features":              json.dumps(features_used),
-        "training_window_years": training_window_years,
-        "seasons_evaluated":     json.dumps(test_seasons),
+        "status":                "failed" if error_message else "complete",
+        "ats_hit_rate":          result.overall_hit_rate,
         "ats_record_wins":       result.total_wins,
         "ats_record_losses":     result.total_losses,
         "ats_record_pushes":     result.total_pushes,
-        "ats_hit_rate":          result.overall_hit_rate,
         "n_games_evaluated":     result.total_n_games,
         "gate_passed":           result.gate_passed,
-        "notes":                 notes or None,
-        # Phase 2 columns
-        "experiment_config_id":  experiment_config_id,
-        "success_criteria":      json.dumps(success_criteria) if success_criteria is not None else None,
+        "training_window_years": training_window_years,
+        "seasons_evaluated":     json.dumps(test_seasons),
         "folds_complete":        folds_complete,
         "folds_total":           folds_total,
-        "completed_at":          completed_at or datetime.now(timezone.utc),
         "error_message":         error_message,
-        # Phase 3 columns
+        "notes":                 notes or None,
+        "success_criteria":      json.dumps(success_criteria) if success_criteria is not None else None,
         "feature_importances":   json.dumps(feature_importances) if feature_importances is not None else None,
     }
 
@@ -230,21 +196,27 @@ def write_backtest_run(
 def write_backtest_predictions(
     client: bigquery.Client,
     result,           # BacktestResult from walk_forward
+    run_id: str | None = None,
+    experiment_config_id: str | None = None,
 ) -> None:
     """
     Insert all fold predictions into experiments.backtest_predictions.
-    Written season-by-season (one BQ load job per test season).
+
+    run_id and experiment_id must match what was written to backtest_runs so the
+    API can join: backtest_predictions.run_id = backtest_runs.run_id.
     """
     all_preds = result.all_predictions()
 
-    # Ensure column set and types match schema
-    all_preds = all_preds.rename(columns={"actual_home_covered": "actual_home_covered"})
     preds_out = all_preds[[
         "game_id", "season", "week", "home_team", "away_team",
         "home_spread_close", "predicted_home_cover_prob", "predicted_side",
         "actual_home_covered", "correct", "ol_mismatch_flag", "fold",
     ]].copy()
-    preds_out.insert(0, "experiment_id", result.experiment_id)
+
+    # experiment_id must be the config UUID so the API's WHERE clause finds it.
+    preds_out.insert(0, "experiment_id", experiment_config_id or result.experiment_id)
+    # run_id is the join key to backtest_runs.
+    preds_out.insert(0, "run_id", run_id or result.experiment_id)
 
     # actual_home_covered must be nullable bool; correct must be nullable Int64
     preds_out["actual_home_covered"] = preds_out["actual_home_covered"].astype(object)
@@ -257,19 +229,18 @@ def write_backtest_predictions(
     job = client.load_table_from_dataframe(preds_out, PREDS_TABLE, job_config=job_config)
     job.result()
     logger.info(
-        f"backtest_predictions: wrote {len(preds_out):,} rows for experiment {result.experiment_id}"
+        f"backtest_predictions: wrote {len(preds_out):,} rows "
+        f"(experiment_id={experiment_config_id or result.experiment_id}, run_id={run_id or result.experiment_id})"
     )
 
 
 def setup_experiments_tables(client: bigquery.Client) -> None:
     """Idempotently create/update the experiments dataset and both output tables.
 
-    Phase 2 note: also issues ALTER TABLE statements to add the four new
-    columns (folds_complete, folds_total, completed_at, error_message) that
-    BACKEND-API's status-polling endpoint requires.  Safe to call repeatedly.
+    backtest_runs already contains all required columns (including run_id, status,
+    feature_importances, etc.) from the Phase 2+ schema recreation.
 
-    Phase 3 note: also issues ALTER TABLE statements to add feature_importances
-    column for persisting XGBoost feature importance scores.
+    backtest_predictions gets run_id added idempotently via ALTER TABLE.
     """
     _ensure_dataset(client)
     _ensure_table(
@@ -277,12 +248,10 @@ def setup_experiments_tables(client: bigquery.Client) -> None:
         partition_field="none",   # no partitioning on runs table (small)
         clustering_fields=None,
     )
-    # Add the four new Phase 2 columns — no-op if they already exist.
-    _alter_runs_table_phase2(client)
-    # Add Phase 3 columns — no-op if they already exist.
-    _alter_runs_table_phase3(client)
     _ensure_table(
         client, PREDS_TABLE, PREDS_SCHEMA,
         partition_field="season",
         clustering_fields=["experiment_id", "fold"],
     )
+    # Ensure run_id exists in predictions (safe to call repeatedly)
+    _alter_predictions_table(client)

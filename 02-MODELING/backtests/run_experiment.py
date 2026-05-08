@@ -571,12 +571,15 @@ def main() -> None:
         f"range {start_season}–{end_season}"
     )
 
-    # Generate a unique run ID up-front so we can reference it in finally
-    run_id = (
+    # Use NFL_RUN_ID from the API if available (so the run is linked to the
+    # pre-generated UUID the caller knows about).  Fall back to a locally
+    # generated ID for local/test invocations.
+    nfl_run_id = os.environ.get("NFL_RUN_ID")
+    run_id = nfl_run_id or (
         datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         + "_" + uuid.uuid4().hex[:6]
     )
-    logger.info(f"Run ID: {run_id}")
+    logger.info(f"Run ID: {run_id} (from NFL_RUN_ID env: {bool(nfl_run_id)})")
 
     # Mark config as running
     _set_config_running(client, experiment_config_id)
@@ -631,6 +634,7 @@ def main() -> None:
             model_feat_cols,
             notes=config.get("description") or "",
             training_window_years=train_seasons,
+            run_id=run_id,
             experiment_config_id=experiment_config_id,
             success_criteria=evaluation,
             folds_complete=len(folds),
@@ -639,7 +643,12 @@ def main() -> None:
             error_message=None,
             feature_importances=result.feature_importance_dict,
         )
-        write_backtest_predictions(client, result)
+        write_backtest_predictions(
+            client,
+            result,
+            run_id=run_id,
+            experiment_config_id=experiment_config_id,
+        )
         logger.info("BigQuery writes complete")
 
         # ── 7. Write local artifacts ──────────────────────────────────────────

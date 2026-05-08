@@ -383,18 +383,12 @@ def trigger_run(
     run_id = str(uuid.uuid4())
 
     try:
-        # Write initial run row first so status polling is immediately consistent.
-        eq.insert_initial_run(
-            client=bq,
-            experiment_id=experiment_id,
-            run_id=run_id,
-            model_type=model_type,
-            feature_columns=feature_columns,
-        )
+        # Mark the experiment as running. The runner will write the actual
+        # backtest_runs row (with metrics) when it completes.
         eq.set_experiment_status(bq, experiment_id, "running")
     except Exception as exc:
         logger.error(
-            "[%s] BigQuery error initialising run for experiment %s: %s",
+            "[%s] BigQuery error setting status to running for experiment %s: %s",
             request_id, experiment_id, exc, exc_info=True,
         )
         raise HTTPException(
