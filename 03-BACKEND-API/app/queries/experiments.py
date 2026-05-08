@@ -412,20 +412,24 @@ def insert_experiment_config(
     model: dict[str, Any],
 ) -> None:
     """Insert a new experiment config row with status='draft'."""
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _streaming_insert(
         client,
         f"{PROJECT}.platform.experiment_configs",
         [{
             "experiment_id": experiment_id,
             "name":          name,
-            "created_at":    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "created_at":    now_str,
+            "updated_at":    now_str,
             "target":        target,
+            # JSON columns: pass the raw JSON string; BQ streaming insert accepts it.
             "features":      json.dumps(features),
             "evaluation":    json.dumps(evaluation),
             "methodology":   json.dumps(methodology),
             "model":         json.dumps(model),
             "status":        "draft",
             "gate_passed":   None,
+            "run_count":     0,
         }],
     )
 
@@ -465,9 +469,10 @@ def insert_initial_run(
 
     Metrics (ats_hit_rate, gate_passed, etc.) are null — the MODELING runner
     populates them when the job completes.  The runner also writes completed_at
-    and error_message; those columns must exist in the BQ table schema.
+    and error_message via DML UPDATE once the job finishes.
     """
     now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     _streaming_insert(
         client,
         f"{PROJECT}.experiments.backtest_runs",
@@ -475,13 +480,23 @@ def insert_initial_run(
             "run_id":             run_id,
             "experiment_id":      experiment_id,
             "name":               f"Run {now.strftime('%Y-%m-%d %H:%M UTC')}",
-            "run_at":             now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "run_at":             now_str,
             "model_type":         model_type,
             "features":           json.dumps(feature_columns),
+            "status":             "running",
             "ats_hit_rate":       None,
+            "ats_record_wins":    None,
+            "ats_record_losses":  None,
+            "ats_record_pushes":  None,
             "n_games_evaluated":  None,
             "gate_passed":        None,
+            "training_window_years": None,
+            "seasons_evaluated":  None,
+            "folds_complete":     None,
+            "folds_total":        None,
+            "error_message":      None,
             "notes":              None,
+            "success_criteria":   None,
         }],
     )
 
