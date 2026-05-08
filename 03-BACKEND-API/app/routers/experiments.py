@@ -402,13 +402,20 @@ def trigger_run(
             detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
         )
 
-    # Fire the Cloud Run Job.  This is intentionally after the BQ writes so the run
-    # record exists before any downstream job could read it.
-    eq.trigger_experiment_runner(experiment_id, run_id)
+    # Fire the Cloud Run Job.  Non-fatal — the BQ writes are already committed,
+    # so the run record exists regardless.  A trigger failure is logged but does
+    # not surface as a 502; the caller still gets 202 and can monitor /status.
+    try:
+        eq.trigger_experiment_runner(experiment_id, run_id)
+        logger.info(
+            "[%s] Triggered run %s for experiment %s", request_id, run_id, experiment_id
+        )
+    except Exception as exc:
+        logger.error(
+            "[%s] Cloud Run Job trigger failed for experiment %s (run %s): %s",
+            request_id, experiment_id, run_id, exc, exc_info=True,
+        )
 
-    logger.info(
-        "[%s] Triggered run %s for experiment %s", request_id, run_id, experiment_id
-    )
     return ExperimentRunResponse(run_id=run_id, status="running")
 
 

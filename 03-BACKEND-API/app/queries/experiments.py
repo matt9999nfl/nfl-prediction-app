@@ -411,26 +411,48 @@ def insert_experiment_config(
     methodology: dict[str, Any],
     model: dict[str, Any],
 ) -> None:
-    """Insert a new experiment config row with status='draft'."""
+    """Insert a new experiment config row with status='draft'.
+
+    Uses DML INSERT (not streaming insert) so that subsequent DML UPDATE
+    statements (e.g. set_experiment_status) can immediately see the row.
+    BigQuery streaming-buffer rows are invisible to DML for up to 90 minutes.
+    """
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    _streaming_insert(
+    _run_dml(
         client,
-        f"{PROJECT}.platform.experiment_configs",
-        [{
-            "experiment_id": experiment_id,
-            "name":          name,
-            "created_at":    now_str,
-            "updated_at":    now_str,
-            "target":        target,
-            # JSON columns: pass the raw JSON string; BQ streaming insert accepts it.
-            "features":      json.dumps(features),
-            "evaluation":    json.dumps(evaluation),
-            "methodology":   json.dumps(methodology),
-            "model":         json.dumps(model),
-            "status":        "draft",
-            "gate_passed":   None,
-            "run_count":     0,
-        }],
+        f"""
+        INSERT INTO `{PROJECT}.platform.experiment_configs`
+        (experiment_id, name, created_at, updated_at, target,
+         features, evaluation, methodology, model,
+         status, gate_passed, run_count)
+        VALUES (
+            @experiment_id,
+            @name,
+            TIMESTAMP(@created_at),
+            TIMESTAMP(@updated_at),
+            @target,
+            PARSE_JSON(@features),
+            PARSE_JSON(@evaluation),
+            PARSE_JSON(@methodology),
+            PARSE_JSON(@model),
+            @status,
+            NULL,
+            @run_count
+        )
+        """,
+        [
+            bigquery.ScalarQueryParameter("experiment_id", "STRING", experiment_id),
+            bigquery.ScalarQueryParameter("name",          "STRING", name),
+            bigquery.ScalarQueryParameter("created_at",    "STRING", now_str),
+            bigquery.ScalarQueryParameter("updated_at",    "STRING", now_str),
+            bigquery.ScalarQueryParameter("target",        "STRING", target),
+            bigquery.ScalarQueryParameter("features",      "STRING", json.dumps(features)),
+            bigquery.ScalarQueryParameter("evaluation",    "STRING", json.dumps(evaluation)),
+            bigquery.ScalarQueryParameter("methodology",   "STRING", json.dumps(methodology)),
+            bigquery.ScalarQueryParameter("model",         "STRING", json.dumps(model)),
+            bigquery.ScalarQueryParameter("status",        "STRING", "draft"),
+            bigquery.ScalarQueryParameter("run_count",     "INT64",  0),
+        ],
     )
 
 
