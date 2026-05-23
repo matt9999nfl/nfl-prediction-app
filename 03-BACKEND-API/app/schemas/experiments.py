@@ -66,7 +66,7 @@ class EvaluationConfig(BaseModel):
 
 
 class MethodologyConfig(BaseModel):
-    type: Literal["walk_forward"]
+    type: Literal["walk_forward"] = "walk_forward"   # default for legacy rows missing this field
     train_seasons: int
     test_seasons: int
     start_season: int
@@ -85,7 +85,9 @@ class ExperimentConfig(BaseModel):
     experiment_id: str
     name: str
     created_at: str                    # ISO 8601
-    target: Literal["ats_cover", "outright_winner", "total_over", "team_total_yards"]
+    # Legacy BQ rows may have target values that predate the current enum;
+    # accept any string so old experiments don't crash the list endpoint.
+    target: str
     features: list[FeatureRef]
     evaluation: EvaluationConfig
     methodology: MethodologyConfig
