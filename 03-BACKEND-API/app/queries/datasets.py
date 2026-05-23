@@ -72,6 +72,83 @@ def _to_bq_table_name(dataset_id: str) -> str:
 # ── Read: platform.datasets ───────────────────────────────────────────────────
 
 
+_UPLOAD_TIMEOUT_MINUTES = 30
+_UPLOAD_TIMEOUT_MESSAGE = (
+    "Processing job did not complete within 30 minutes. "
+    "The upload may have failed. Please delete this entry and try again."
+)
+
+
+def _reconcile_stuck_uploading(
+    client: bigquery.Client,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Lazy reconciliation: for any row with status='uploading' and upload_date
+    more than 30 minutes ago, flip it to status='error' in BigQuery and update
+    the in-memory row so the response reflects the corrected state.
+
+    Called after a list or single-row query returns results.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    timeout_cutoff = datetime.now(timezone.utc) - timedelta(minutes=_UPLOAD_TIMEOUT_MINUTES)
+
+    reconciled: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("status") != "uploading":
+            reconciled.append(row)
+            continue
+
+        # Parse upload_date (stored as ISO 8601 string from FORMAT_TIMESTAMP).
+        upload_date_str: str | None = row.get("upload_date")
+        if not upload_date_str:
+            reconciled.append(row)
+            continue
+
+        try:
+            upload_dt = datetime.fromisoformat(upload_date_str.replace("Z", "+00:00"))
+        except ValueError:
+            reconciled.append(row)
+            continue
+
+        if upload_dt > timeout_cutoff:
+            # Not yet timed out — leave as-is.
+            reconciled.append(row)
+            continue
+
+        # Timed out — flip to error in BigQuery.
+        dataset_id = row["dataset_id"]
+        try:
+            _run_dml(
+                client,
+                f"""
+                UPDATE `{PROJECT}.platform.datasets`
+                SET   status        = 'error',
+                      updated_at    = CURRENT_TIMESTAMP()
+                WHERE dataset_id    = @dataset_id
+                  AND status        = 'uploading'
+                """,
+                [bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id)],
+            )
+            logger.info(
+                "Reconciled stuck uploading dataset %s to error (upload_date=%s)",
+                dataset_id, upload_date_str,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not reconcile stuck dataset %s: %s", dataset_id, exc
+            )
+
+        # Return the corrected row regardless of whether the DML succeeded —
+        # if DML failed, showing error state is still the right UX.
+        updated_row = dict(row)
+        updated_row["status"] = "error"
+        reconciled.append(updated_row)
+
+    return reconciled
+
+
 def list_datasets(
     client: bigquery.Client,
     status: str | None,
@@ -117,7 +194,8 @@ def list_datasets(
 
     rows = _run_query(client, query, params)
     has_more = len(rows) > limit
-    return rows[:limit], has_more
+    result = _reconcile_stuck_uploading(client, rows[:limit])
+    return result, has_more
 
 
 def get_dataset(
@@ -142,7 +220,10 @@ def get_dataset(
     """
     params = [bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id)]
     rows = _run_query(client, query, params)
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    reconciled = _reconcile_stuck_uploading(client, rows)
+    return reconciled[0]
 
 
 def get_dataset_columns(
@@ -198,21 +279,23 @@ def insert_dataset_row(
     upload_date: datetime,
 ) -> None:
     """Insert an initial dataset metadata row with status='uploading'."""
+    now_str = upload_date.strftime("%Y-%m-%d %H:%M:%S UTC")
     _streaming_insert(
         client,
         f"{PROJECT}.platform.datasets",
         [{
-            "dataset_id":     dataset_id,
-            "name":           name,
-            "description":    description,
-            "upload_date":    upload_date.strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "join_key_type":  None,
-            "join_key_columns": None,
-            "row_count":      None,
-            "column_count":   None,
-            "license_tag":    license_tag,
-            "status":         "uploading",
-            "schema_source":  "form",
+            "dataset_id":    dataset_id,
+            "name":          name,
+            "description":   description,
+            "upload_date":   now_str,
+            "join_key_type": None,
+            "row_count":     None,
+            "column_count":  None,
+            "license_tag":   license_tag,
+            "status":        "uploading",
+            "schema_source": "form",
+            "created_at":    now_str,
+            "updated_at":    now_str,
         }],
     )
 
@@ -231,7 +314,8 @@ def update_dataset_after_processing(
         UPDATE `{PROJECT}.platform.datasets`
         SET   status       = @status,
               row_count    = @row_count,
-              column_count = @column_count
+              column_count = @column_count,
+              updated_at   = CURRENT_TIMESTAMP()
         WHERE dataset_id   = @dataset_id
         """,
         [
@@ -247,7 +331,7 @@ def update_dataset_schema_metadata(
     client: bigquery.Client,
     dataset_id: str,
     join_key_type: str,
-    join_key_columns: dict[str, str],
+    join_key_columns: dict[str, str] | None = None,  # not stored — table has no such column
     schema_source: str = "form",
 ) -> None:
     """DML update — called by PUT /schema to store join key info and flip status to ready."""
@@ -255,19 +339,16 @@ def update_dataset_schema_metadata(
         client,
         f"""
         UPDATE `{PROJECT}.platform.datasets`
-        SET   join_key_type    = @join_key_type,
-              join_key_columns = @join_key_columns,
-              status           = 'ready',
-              schema_source    = @schema_source
-        WHERE dataset_id       = @dataset_id
+        SET   join_key_type = @join_key_type,
+              status        = 'ready',
+              schema_source = @schema_source,
+              updated_at    = CURRENT_TIMESTAMP()
+        WHERE dataset_id    = @dataset_id
         """,
         [
-            bigquery.ScalarQueryParameter("join_key_type",    "STRING", join_key_type),
-            bigquery.ScalarQueryParameter(
-                "join_key_columns", "STRING", json.dumps(join_key_columns)
-            ),
-            bigquery.ScalarQueryParameter("schema_source",    "STRING", schema_source),
-            bigquery.ScalarQueryParameter("dataset_id",       "STRING", dataset_id),
+            bigquery.ScalarQueryParameter("join_key_type", "STRING", join_key_type),
+            bigquery.ScalarQueryParameter("schema_source", "STRING", schema_source),
+            bigquery.ScalarQueryParameter("dataset_id",    "STRING", dataset_id),
         ],
     )
 
@@ -388,6 +469,56 @@ def delete_dataset(client: bigquery.Client, dataset_id: str) -> None:
         logger.warning("Could not drop user_datasets.%s: %s", bq_table, exc)
 
 
+def delete_dataset_registry_only(client: bigquery.Client, dataset_id: str) -> None:
+    """
+    Delete the registry row from platform.datasets (and its column rows).
+    Does NOT drop the user_datasets BigQuery table — registry-only delete
+    for the P5-03 DELETE endpoint which must not cascade.
+
+    Callers are responsible for the GCS file delete (separate step).
+    """
+    # Delete column metadata first (FK-like dependency).
+    _run_dml(
+        client,
+        f"DELETE FROM `{PROJECT}.platform.dataset_columns` WHERE dataset_id = @dataset_id",
+        [bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id)],
+    )
+    # Delete the main registry row.
+    _run_dml(
+        client,
+        f"DELETE FROM `{PROJECT}.platform.datasets` WHERE dataset_id = @dataset_id",
+        [bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id)],
+    )
+
+
+def delete_dataset_gcs_file(dataset_id: str) -> None:
+    """
+    Attempt to delete the raw upload file from GCS bucket 'nfl-model-471509-uploads'.
+    Path pattern: datasets/{dataset_id}.*
+
+    Logs a warning and returns without raising if the file is not found or
+    the delete fails — the database row is the canonical state.
+    """
+    try:
+        from google.cloud import storage as gcs_storage
+        storage_client = gcs_storage.Client()
+        bucket = storage_client.bucket(f"{PROJECT}-uploads")
+        blobs = list(bucket.list_blobs(prefix=f"datasets/{dataset_id}"))
+        if not blobs:
+            logger.info(
+                "GCS: no upload file found for dataset %s (already cleaned up or never uploaded)",
+                dataset_id,
+            )
+            return
+        for blob in blobs:
+            blob.delete()
+            logger.info("GCS: deleted upload file %s for dataset %s", blob.name, dataset_id)
+    except Exception as exc:
+        logger.warning(
+            "GCS file delete failed for dataset %s (non-fatal): %s", dataset_id, exc
+        )
+
+
 # ── File processing (called inside the background task) ───────────────────────
 
 
@@ -464,7 +595,69 @@ def load_dataframe_to_bigquery(
     )
 
 
-# ── Background task ───────────────────────────────────────────────────────────
+# ── Cloud Run Job trigger ─────────────────────────────────────────────────────
+
+
+def trigger_dataset_processor(dataset_id: str, file_ext: str) -> None:
+    """
+    Trigger the Cloud Run Job for the dataset upload processor.
+
+    Makes a direct HTTP call to the Cloud Run Jobs API to execute the
+    nfl-dataset-processor job with environment variable overrides for
+    DATASET_ID and FILE_EXT.
+
+    Args:
+        dataset_id: UUID of the dataset row already inserted into platform.datasets.
+        file_ext:   File extension without dot — csv | xlsx | xls | json.
+    """
+    import google.auth
+    import google.auth.transport.requests
+    import requests as http_requests
+
+    try:
+        credentials, project = google.auth.default()
+        credentials.refresh(google.auth.transport.requests.Request())
+
+        region = "us-central1"
+        job_name = "nfl-dataset-processor"
+        url = (
+            f"https://{region}-run.googleapis.com/apis/run.googleapis.com/v1/"
+            f"namespaces/{project}/jobs/{job_name}:run"
+        )
+
+        payload = {
+            "overrides": {
+                "containerOverrides": [{
+                    "env": [
+                        {"name": "DATASET_ID", "value": dataset_id},
+                        {"name": "FILE_EXT",   "value": file_ext},
+                    ]
+                }]
+            }
+        }
+
+        resp = http_requests.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {credentials.token}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+
+        execution_name = resp.json().get("metadata", {}).get("name", "unknown")
+        logger.info(
+            "Cloud Run Job execution created for dataset %s (ext=%s): %s",
+            dataset_id, file_ext, execution_name,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to trigger dataset processor for %s (ext=%s): %s",
+            dataset_id, file_ext, exc, exc_info=True,
+        )
+        raise
+
+
+# ── Background task (kept for local dev / testing — not used in production) ───
 
 
 def process_upload_background(

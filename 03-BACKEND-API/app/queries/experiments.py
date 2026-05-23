@@ -93,6 +93,22 @@ def _experiment_select() -> str:
     """
 
 
+def _experiment_select_aliased(alias: str = "ec") -> str:
+    """Column list with table alias for queries that join other tables."""
+    return f"""
+        {alias}.experiment_id,
+        {alias}.name,
+        FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', {alias}.created_at) AS created_at,
+        {alias}.target,
+        {alias}.features,
+        {alias}.evaluation,
+        {alias}.methodology,
+        {alias}.model,
+        {alias}.status,
+        {alias}.gate_passed
+    """
+
+
 # ── List experiments ──────────────────────────────────────────────────────────
 
 
@@ -107,16 +123,24 @@ def list_experiments(
     conditions: list[str] = []
     params: list[bigquery.ScalarQueryParameter] = []
 
+    # P5-05 fix: when status='complete' is requested, return experiments that have
+    # at least one run in experiments.backtest_runs regardless of the status column
+    # value.  The runner may not always set status='complete' correctly, so we
+    # treat "has a run" as the ground truth for completion.
+    use_run_join = False
     if status is not None:
-        conditions.append("status = @status")
-        params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
+        if status == "complete":
+            use_run_join = True
+        else:
+            conditions.append("ec.status = @status")
+            params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
 
     if target is not None:
-        conditions.append("target = @target")
+        conditions.append("ec.target = @target")
         params.append(bigquery.ScalarQueryParameter("target", "STRING", target))
 
     if gate_passed is not None:
-        conditions.append("gate_passed = @gate_passed")
+        conditions.append("ec.gate_passed = @gate_passed")
         params.append(bigquery.ScalarQueryParameter("gate_passed", "BOOL", gate_passed))
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
@@ -126,13 +150,31 @@ def list_experiments(
         bigquery.ScalarQueryParameter("off", "INT64", offset),
     ])
 
-    query = f"""
-        SELECT {_experiment_select()}
-        FROM `{PROJECT}.platform.experiment_configs`
-        {where}
-        ORDER BY created_at DESC
-        LIMIT @lim OFFSET @off
-    """
+    if use_run_join:
+        # Return experiments that have at least one run in backtest_runs,
+        # regardless of what the status column says on experiment_configs.
+        # Note: no DISTINCT needed — experiment_id is PK in experiment_configs.
+        extra_conditions = (' AND ' + ' AND '.join(conditions)) if conditions else ''
+        query = f"""
+            SELECT {_experiment_select_aliased("ec")}
+            FROM `{PROJECT}.platform.experiment_configs` ec
+            WHERE EXISTS (
+                SELECT 1
+                FROM `{PROJECT}.experiments.backtest_runs` br
+                WHERE br.experiment_id = ec.experiment_id
+            )
+            {extra_conditions}
+            ORDER BY ec.created_at DESC
+            LIMIT @lim OFFSET @off
+        """
+    else:
+        query = f"""
+            SELECT {_experiment_select_aliased("ec")}
+            FROM `{PROJECT}.platform.experiment_configs` ec
+            {where}
+            ORDER BY ec.created_at DESC
+            LIMIT @lim OFFSET @off
+        """
 
     rows = _run_query(client, query, params)
     has_more = len(rows) > limit
@@ -273,8 +315,7 @@ def list_predictions(
             p.predicted_home_cover_prob,
             p.predicted_side,
             p.actual_home_covered,
-            p.correct,
-            p.confidence_tier
+            p.correct
         FROM `{PROJECT}.experiments.backtest_predictions` p
         JOIN latest_run lr ON p.run_id = lr.run_id
         {where}
@@ -285,6 +326,91 @@ def list_predictions(
     rows = _run_query(client, query, params)
     has_more = len(rows) > limit
     return rows[:limit], has_more
+
+
+# ── Phase 4 / Deliverable 3.1: Per-fold data ─────────────────────────────────
+
+
+def get_latest_run_id(
+    client: bigquery.Client,
+    experiment_id: str,
+) -> str | None:
+    """Return the latest_run_id from platform.experiment_configs, or None."""
+    query = f"""
+        SELECT latest_run_id
+        FROM `{PROJECT}.platform.experiment_configs`
+        WHERE experiment_id = @experiment_id
+        LIMIT 1
+    """
+    params = [bigquery.ScalarQueryParameter("experiment_id", "STRING", experiment_id)]
+    rows = _run_query(client, query, params)
+    if not rows:
+        return None
+    return rows[0].get("latest_run_id")
+
+
+def get_per_fold_results(
+    client: bigquery.Client,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Return per-season fold summary for a given run_id from
+    experiments.backtest_predictions, grouped by season.
+
+    The backtest_predictions table is partitioned on season; we supply the
+    run_id filter (not a direct season filter) so BigQuery can prune as needed.
+    Returns an empty list if run_id is None or no rows match.
+    """
+    query = f"""
+        SELECT
+          season,
+          COUNTIF(correct = 1)                                                  AS wins,
+          COUNTIF(correct = 0)                                                  AS losses,
+          COUNTIF(correct IS NULL)                                              AS pushes,
+          SAFE_DIVIDE(COUNTIF(correct = 1), COUNTIF(correct IS NOT NULL))       AS hit_rate,
+          COUNTIF(correct IS NOT NULL)                                          AS n_games
+        FROM `{PROJECT}.experiments.backtest_predictions`
+        WHERE run_id = @run_id
+        GROUP BY season
+        ORDER BY season
+    """
+    params = [bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
+    return _run_query(client, query, params)
+
+
+# ── Phase 4 / Deliverable 3.2: Feature importance ────────────────────────────
+
+
+def get_feature_importances(
+    client: bigquery.Client,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Return feature importances from experiments.backtest_runs for a given run_id.
+
+    The feature_importances column stores JSON: {"feature_name": importance, ...}.
+    Returns a list of {"feature": str, "importance": float} dicts sorted
+    descending by importance.  Returns an empty list if the column is null or
+    the run doesn't exist.
+    """
+    query = f"""
+        SELECT feature_importances
+        FROM `{PROJECT}.experiments.backtest_runs`
+        WHERE run_id = @run_id
+        LIMIT 1
+    """
+    params = [bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
+    rows = _run_query(client, query, params)
+    if not rows or rows[0].get("feature_importances") is None:
+        return []
+
+    raw = _parse_json(rows[0]["feature_importances"])
+    if not isinstance(raw, dict):
+        return []
+
+    items = [{"feature": k, "importance": float(v)} for k, v in raw.items()]
+    items.sort(key=lambda x: x["importance"], reverse=True)
+    return items
 
 
 # ── Step 3: write operations ──────────────────────────────────────────────────

@@ -35,7 +35,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from google.cloud import bigquery
 
@@ -47,6 +47,7 @@ from app.schemas.common import ErrorResponse, Pagination
 from app.schemas.datasets import (
     Dataset,
     DatasetColumn,
+    DatasetDeleteResponse,
     DatasetDetail,
     DatasetListResponse,
     DatasetUploadResponse,
@@ -93,7 +94,6 @@ def _ext(filename: str | None) -> str | None:
 )
 async def upload_dataset(
     request: Request,
-    background_tasks: BackgroundTasks,
     request_id: Annotated[str, Depends(get_request_id)],
     bq: Annotated[bigquery.Client, Depends(get_bq_client)],
     file: Annotated[UploadFile, File(description="CSV, Excel, or JSON file (max 50 MB)")],
@@ -183,16 +183,19 @@ async def upload_dataset(
             },
         )
 
-    # ── Register background processing task ───────────────────────────────────
-    background_tasks.add_task(
-        dq.process_upload_background,
-        dataset_id,
-        content,
-        ext,
-        bq,
-    )
+    # ── Trigger the Cloud Run Job for async processing ────────────────────────
+    # Non-fatal: the GCS file and metadata row are already committed.
+    # A trigger failure is logged; the dataset status stays 'uploading' and
+    # the operator can re-trigger the job manually via gcloud.
+    try:
+        dq.trigger_dataset_processor(dataset_id, ext)
+    except Exception as exc:
+        logger.error(
+            "[%s] Cloud Run Job trigger failed for dataset %s: %s",
+            request_id, dataset_id, exc, exc_info=True,
+        )
 
-    logger.info("[%s] Dataset %s accepted, background task queued", request_id, dataset_id)
+    logger.info("[%s] Dataset %s accepted, Cloud Run Job triggered", request_id, dataset_id)
     return DatasetUploadResponse(dataset_id=dataset_id, schema_job_id=schema_job_id)
 
 
@@ -429,16 +432,18 @@ def update_schema(
 
 @router.delete(
     "/{dataset_id}",
-    status_code=204,
+    status_code=200,
+    response_model=DatasetDeleteResponse,
     responses={
         404: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
     },
     summary="Delete a dataset",
     description=(
-        "Removes the dataset metadata, column registry, and BigQuery table.  "
-        "Returns 409 if any experiment config references this dataset."
+        "Removes the dataset registry entry (platform.datasets + dataset_columns) "
+        "and attempts to delete the raw upload file from GCS.  "
+        "GCS delete failures are logged but do not fail the response.  "
+        "Returns 200 on success; 404 if the dataset does not exist."
     ),
 )
 def delete_dataset(
@@ -446,7 +451,7 @@ def delete_dataset(
     request: Request,
     request_id: Annotated[str, Depends(get_request_id)],
     bq: Annotated[bigquery.Client, Depends(get_bq_client)],
-) -> None:
+) -> DatasetDeleteResponse:
     # Verify it exists.
     try:
         row = dq.get_dataset(bq, dataset_id)
@@ -463,41 +468,25 @@ def delete_dataset(
             detail={"error": f"Dataset '{dataset_id}' not found", "code": "not_found", "request_id": request_id},
         )
 
-    # Check for experiment references before deleting.
+    # Delete registry rows from platform.datasets and platform.dataset_columns.
+    # Does NOT drop the user_datasets BigQuery table (scope excluded per P5-03 spec).
     try:
-        referenced = dq.is_dataset_referenced_in_experiments(bq, dataset_id)
+        dq.delete_dataset_registry_only(bq, dataset_id)
     except Exception as exc:
-        logger.error("[%s] BQ reference check failed for %s: %s", request_id, dataset_id, exc, exc_info=True)
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
-        )
-
-    if referenced:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": (
-                    f"Dataset '{dataset_id}' is referenced by one or more experiment configs "
-                    "and cannot be deleted.  Remove those experiments first."
-                ),
-                "code": "conflict",
-                "request_id": request_id,
-            },
-        )
-
-    # Delete dataset + columns + BQ table.
-    try:
-        dq.delete_dataset(bq, dataset_id)
-    except Exception as exc:
-        logger.error("[%s] Delete failed for dataset %s: %s", request_id, dataset_id, exc, exc_info=True)
+        logger.error("[%s] Registry delete failed for dataset %s: %s", request_id, dataset_id, exc, exc_info=True)
         raise HTTPException(
             status_code=502,
             detail={"error": "Delete operation failed", "code": "upstream_error", "request_id": request_id},
         )
 
-    logger.info("[%s] Dataset %s deleted", request_id, dataset_id)
-    # 204 No Content — return None, FastAPI sends empty body.
+    # Attempt GCS file delete — non-fatal.
+    dq.delete_dataset_gcs_file(dataset_id)
+
+    logger.info("[%s] Dataset %s deleted (registry only)", request_id, dataset_id)
+    return DatasetDeleteResponse(
+        message="Dataset deleted successfully",
+        dataset_id=dataset_id,
+    )
 
 
 # ── POST /api/v1/datasets/{dataset_id}/infer-schema ──────────────────────────

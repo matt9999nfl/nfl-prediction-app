@@ -42,6 +42,9 @@ from app.schemas.experiments import (
     ExperimentListResponse,
     ExperimentRunResponse,
     ExperimentRunStatus,
+    FeatureImportanceItem,
+    FeatureImportanceResponse,
+    FoldResult,
     PredictionItem,
     PredictionListResponse,
     RunProgress,
@@ -150,11 +153,29 @@ def get_experiment(
         )
         run_rows = []
 
+    # Fetch per-fold data using the latest_run_id from experiment_configs.
+    per_fold_rows: list[dict] = []
+    try:
+        latest_run_id = eq.get_latest_run_id(bq, experiment_id)
+        if latest_run_id:
+            per_fold_rows = eq.get_per_fold_results(bq, latest_run_id)
+    except Exception as exc:
+        logger.warning(
+            "[%s] Could not fetch per-fold data for experiment %s: %s",
+            request_id, experiment_id, exc,
+        )
+
     config = ExperimentConfig.model_validate(config_row)
     runs = [BacktestRun.model_validate(r) for r in run_rows]
     latest = runs[0] if runs else None
+    per_fold = [FoldResult.model_validate(r) for r in per_fold_rows]
 
-    return ExperimentDetailResponse(config=config, latest_run=latest, run_history=runs)
+    return ExperimentDetailResponse(
+        config=config,
+        latest_run=latest,
+        run_history=runs,
+        per_fold=per_fold,
+    )
 
 
 # ── GET /api/v1/experiments/{experiment_id}/predictions ──────────────────────
@@ -469,6 +490,85 @@ def get_run_status(
         completed_at=row.get("completed_at"),
         error=row.get("error_message"),
     )
+
+
+# ── GET /api/v1/experiments/{experiment_id}/feature-importance ───────────────
+
+
+@router.get(
+    "/{experiment_id}/feature-importance",
+    response_model=FeatureImportanceResponse,
+    responses={
+        404: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+    },
+    summary="Feature importances for the most recent run of an experiment",
+    description=(
+        "Returns feature importances from the `feature_importances` JSON column in "
+        "`experiments.backtest_runs` for the experiment's `latest_run_id`. "
+        "Sorted descending by importance. Returns `{run_id: null, features: []}` if "
+        "no run exists or no importance data has been recorded."
+    ),
+)
+def get_feature_importance(
+    experiment_id: str,
+    request: Request,
+    request_id: Annotated[str, Depends(get_request_id)],
+    bq: Annotated[bigquery.Client, Depends(get_bq_client)],
+) -> FeatureImportanceResponse:
+    # Confirm experiment exists.
+    try:
+        config_row = eq.get_experiment_by_id(bq, experiment_id)
+    except Exception as exc:
+        logger.error(
+            "[%s] BigQuery error fetching experiment %s: %s",
+            request_id, experiment_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
+        )
+
+    if config_row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": f"Experiment '{experiment_id}' not found",
+                "code": "not_found",
+                "request_id": request_id,
+            },
+        )
+
+    # Look up the latest_run_id from experiment_configs.
+    try:
+        run_id = eq.get_latest_run_id(bq, experiment_id)
+    except Exception as exc:
+        logger.error(
+            "[%s] BigQuery error fetching latest_run_id for experiment %s: %s",
+            request_id, experiment_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
+        )
+
+    if run_id is None:
+        return FeatureImportanceResponse(run_id=None, features=[])
+
+    try:
+        items = eq.get_feature_importances(bq, run_id)
+    except Exception as exc:
+        logger.error(
+            "[%s] BigQuery error fetching feature importances for run %s: %s",
+            request_id, run_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
+        )
+
+    features = [FeatureImportanceItem.model_validate(item) for item in items]
+    return FeatureImportanceResponse(run_id=run_id, features=features)
 
 
 # ── POST /api/v1/experiments/{experiment_id}/cancel ──────────────────────────

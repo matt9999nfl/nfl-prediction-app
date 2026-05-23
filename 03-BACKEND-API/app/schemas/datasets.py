@@ -66,6 +66,13 @@ class DatasetUploadResponse(BaseModel):
     schema_job_id: str                  # UUID tracking the background processing job
 
 
+# ── Delete response ───────────────────────────────────────────────────────────
+
+class DatasetDeleteResponse(BaseModel):
+    message: str
+    dataset_id: str
+
+
 # ── Schema update request ─────────────────────────────────────────────────────
 
 class ColumnMapping(BaseModel):

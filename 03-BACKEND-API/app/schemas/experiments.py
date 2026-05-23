@@ -5,13 +5,53 @@ Matches API_CONTRACTS.md → ExperimentConfig, BacktestRun, and prediction respo
 run_id ruling (Step 1, #3): run_id is now a required field on new BacktestRun rows.
 Kept optional here for backward-compat with pre-Phase-2 rows that may not have it.
 """
-from typing import Literal
-from pydantic import BaseModel, Field
+from typing import Literal, Optional, Union
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import Pagination
 
 
+# ── Phase 4 / Deliverable 3.1: Per-fold result ───────────────────────────────
+
+class FoldResult(BaseModel):
+    """Per-season fold summary from experiments.backtest_predictions."""
+    season: int
+    wins: int
+    losses: int
+    pushes: int
+    hit_rate: float | None = None
+    n_games: int
+
+
+# ── Phase 4 / Deliverable 3.2: Feature importance ────────────────────────────
+
+class FeatureImportanceItem(BaseModel):
+    feature: str
+    importance: float
+
+
+class FeatureImportanceResponse(BaseModel):
+    run_id: str | None = None
+    features: list[FeatureImportanceItem] = Field(default_factory=list)
+
+
 # ── Experiment sub-types ──────────────────────────────────────────────────────
+
+class GameUniverseFilter(BaseModel):
+    field: Literal["div_game", "week"]
+    operator: Literal["eq", "gte", "lte", "ne"]
+    value: Union[bool, int]
+
+    @model_validator(mode="after")
+    def value_type_matches_field(self) -> "GameUniverseFilter":
+        if self.field == "div_game" and not isinstance(self.value, bool):
+            raise ValueError("div_game filter value must be a boolean")
+        if self.field == "week" and isinstance(self.value, bool):
+            raise ValueError("week filter value must be an integer, not a boolean")
+        if self.field == "week" and not isinstance(self.value, int):
+            raise ValueError("week filter value must be an integer")
+        return self
+
 
 class FeatureRef(BaseModel):
     dataset: str
@@ -31,6 +71,7 @@ class MethodologyConfig(BaseModel):
     test_seasons: int
     start_season: int
     end_season: int
+    game_universe: Optional[GameUniverseFilter] = None
 
 
 class ModelConfig(BaseModel):
@@ -72,6 +113,7 @@ class ExperimentDetailResponse(BaseModel):
     config: ExperimentConfig
     latest_run: BacktestRun | None = None
     run_history: list[BacktestRun] = Field(default_factory=list)
+    per_fold: list[FoldResult] = Field(default_factory=list)
 
 
 class ExperimentListResponse(BaseModel):
@@ -92,7 +134,7 @@ class PredictionItem(BaseModel):
     predicted_side: Literal["home", "away"]
     actual_home_covered: bool | None = None
     correct: int | None = None
-    confidence_tier: Literal["high", "medium", "low"]
+    confidence_tier: Literal["high", "medium", "low"] | None = None
 
 
 class PredictionListResponse(BaseModel):
@@ -162,7 +204,7 @@ class ProductionPredictionItem(BaseModel):
     predicted_side: Literal["home", "away"]
     actual_home_covered: bool | None = None
     correct: bool | None = None
-    confidence_tier: Literal["high", "medium", "low"]
+    confidence_tier: Literal["high", "medium", "low"] | None = None
 
 
 class ProductionPredictionsResponse(BaseModel):
