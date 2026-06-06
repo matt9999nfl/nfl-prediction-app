@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { formatRelativeDate, targetLabel } from '@/lib/formatters'
-import { FlaskConical, Plus } from 'lucide-react'
+import { AlertTriangle, FlaskConical, Plus } from 'lucide-react'
 
 export function ModelPage() {
   const {
@@ -83,7 +83,19 @@ export function ModelPage() {
               <Card className="h-full transition-shadow group-hover:shadow-md">
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base leading-tight">{exp.name}</CardTitle>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CardTitle className="text-base leading-tight truncate">{exp.name}</CardTitle>
+                      {/* BUG-002 (F2-B): amber warning badge for experiments with deprecated features */}
+                      {exp.has_deprecated_features && (
+                        <span
+                          title="This experiment references features that are no longer available"
+                          aria-label="This experiment references features that are no longer available"
+                          className="shrink-0 text-amber-500"
+                        >
+                          <AlertTriangle className="h-4 w-4" />
+                        </span>
+                      )}
+                    </div>
                     <StatusBadge status={exp.status} />
                   </div>
                   <CardDescription>

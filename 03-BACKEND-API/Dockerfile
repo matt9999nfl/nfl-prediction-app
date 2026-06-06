@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir ".[dev]" 2>/dev/null || pip install --no-cache-dir .
 
 COPY app/ ./app/
+COPY scripts/ ./scripts/
 
 EXPOSE 8080
 

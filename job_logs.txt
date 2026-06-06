@@ -1,0 +1,76 @@
+2026-05-07 10:58:17     2025:      285 rows  [OK]
+2026-05-07 10:58:17     TOTAL: 3,028 rows
+2026-05-07 10:58:17 2026-05-07 10:58:17,662 INFO STEP COMPLETE: 1/7 ? Ingest raw schedules (53.9s)
+2026-05-07 10:58:17 2026-05-07 10:58:17,662 INFO 
+2026-05-07 10:58:17 ============================================================
+2026-05-07 10:58:17 2026-05-07 10:58:17,662 INFO STEP: 2/7 ? Audit closing lines
+2026-05-07 10:58:17 2026-05-07 10:58:17,662 INFO ============================================================
+2026-05-07 10:58:17 2026-05-07 10:58:17,662 INFO Fetching schedules for closing line audit...
+2026-05-07 10:58:18 ============================================================
+2026-05-07 10:58:18 TASK 4 ? CLOSING LINE AUDIT
+2026-05-07 10:58:18 ============================================================
+2026-05-07 10:58:18   spread_line present:  YES
+2026-05-07 10:58:18   total_line present:   YES
+2026-05-07 10:58:18   REG games 2015-2025: 2895
+2026-05-07 10:58:18   spread_line nulls:    0 (0.0%)
+2026-05-07 10:58:18   Season    Spread Nulls   Total   Null %
+2026-05-07 10:58:18   ------------------------------------------
+2026-05-07 10:58:18   2015                 0     256     0.0%
+2026-05-07 10:58:18   2016                 0     256     0.0%
+2026-05-07 10:58:18   2017                 0     256     0.0%
+2026-05-07 10:58:18   2018                 0     256     0.0%
+2026-05-07 10:58:18   2019                 0     256     0.0%
+2026-05-07 10:58:18   2020                 0     256     0.0%
+2026-05-07 10:58:18   2021                 0     272     0.0%
+2026-05-07 10:58:18   2022                 0     271     0.0%
+2026-05-07 10:58:18   2023                 0     272     0.0%
+2026-05-07 10:58:18   2024                 0     272     0.0%
+2026-05-07 10:58:18   2025                 0     272     0.0%
+2026-05-07 10:58:18   RESULT: 0.0% null rate ? 5% ? OPTION 1 ? Use nflverse schedules spread_line/total_line directly
+2026-05-07 10:58:18 ============================================================
+2026-05-07 10:58:18 2026-05-07 10:58:18,017 INFO STEP COMPLETE: 2/7 ? Audit closing lines (0.4s)
+2026-05-07 10:58:18 2026-05-07 10:58:18,017 INFO 
+2026-05-07 10:58:18 ============================================================
+2026-05-07 10:58:18 2026-05-07 10:58:18,017 INFO STEP: 3/7 ? Ingest raw PBP
+2026-05-07 10:58:18 2026-05-07 10:58:18,017 INFO ============================================================
+2026-05-07 10:58:18 2026-05-07 10:58:18,319 INFO Dataset ready: raw_nflfastr
+2026-05-07 10:58:18 2026-05-07 10:58:18,512 INFO Dropped existing table: nfl-model-471509.raw_nflfastr.pbp
+2026-05-07 10:58:18 2026-05-07 10:58:18,722 INFO Table ready: nfl-model-471509.raw_nflfastr.pbp
+2026-05-07 10:58:18 2026-05-07 10:58:18,722 INFO === PBP season 2015 ===
+2026-05-07 10:58:18 2026-05-07 10:58:18,722 INFO Fetching PBP for season 2015
+2026-05-07 10:58:20 2015 done.
+2026-05-07 10:58:20 2026-05-07 10:58:20,040 INFO PBP 2015: 48122 rows ? OK
+2026-05-07 10:58:20 2026-05-07 10:58:20,040 INFO ValidationResult(passed=True)
+2026-05-07 10:58:27 /usr/local/lib/python3.11/site-packages/google/cloud/bigquery/_pandas_helpers.py:486: FutureWarning: Loading pandas DataFrame into BigQuery will require pandas-gbq package version 0.26.1 or greater in the future. Tried to import pandas-gbq and got: No module named 'pandas_gbq'
+2026-05-07 10:58:27   warnings.warn(
+2026-05-07 10:58:27 /usr/local/lib/python3.11/site-packages/google/cloud/bigquery/_pandas_helpers.py:553: UserWarning: Could not determine the type of columns: lateral_sack_player_id, lateral_sack_player_name, tackle_for_loss_2_player_id, tackle_for_loss_2_player_name, tackle_with_assist_2_player_id, tackle_with_assist_2_player_name, tackle_with_assist_2_team, st_play_type, end_clock_time, end_yard_line
+2026-05-07 10:58:27   warnings.warn(msg)
+2026-05-07 10:58:42 2026-05-07 10:58:42,273 INFO PBP 2015: loaded 48122 rows in 23.6s
+2026-05-07 10:58:42 2026-05-07 10:58:42,273 INFO === PBP season 2016 ===
+2026-05-07 10:58:42 2026-05-07 10:58:42,273 INFO Fetching PBP for season 2016
+2026-05-07 10:58:43 2016 done.
+2026-05-07 10:58:43 2026-05-07 10:58:43,812 INFO PBP 2016: 47651 rows ? OK
+2026-05-07 10:58:43 2026-05-07 10:58:43,812 INFO ValidationResult(passed=True)
+2026-05-07 10:58:51 /usr/local/lib/python3.11/site-packages/google/cloud/bigquery/_pandas_helpers.py:486: FutureWarning: Loading pandas DataFrame into BigQuery will require pandas-gbq package version 0.26.1 or greater in the future. Tried to import pandas-gbq and got: No module named 'pandas_gbq'
+2026-05-07 10:58:51   warnings.warn(
+2026-05-07 10:58:52 /usr/local/lib/python3.11/site-packages/google/cloud/bigquery/_pandas_helpers.py:553: UserWarning: Could not determine the type of columns: lateral_sack_player_id, lateral_sack_player_name, assist_tackle_3_player_id, assist_tackle_3_player_name, assist_tackle_3_team, assist_tackle_4_player_id, assist_tackle_4_player_name, assist_tackle_4_team, tackle_with_assist_2_player_id, tackle_with_assist_2_player_name, tackle_with_assist_2_team, st_play_type, end_clock_time, end_yard_line, defense_man_zone_type, defense_coverage_type
+2026-05-07 10:58:52   warnings.warn(msg)
+2026-05-07 10:58:55 Traceback (most recent call last):
+  File "/app/scripts/run_pipeline_job.py", line 20, in <module>
+    main()
+  File "/app/scripts/run_pipeline.py", line 271, in main
+    step("3/7 ? Ingest raw PBP", run_ingest_pbp, client, adapter)
+  File "/app/scripts/run_pipeline.py", line 65, in step
+    result = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/app/scripts/run_pipeline.py", line 157, in run_ingest_pbp
+    r = ingest_season(client, adapter, season)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/scripts/ingest_pbp.py", line 68, in ingest_season
+    job.result()
+  File "/usr/local/lib/python3.11/site-packages/google/cloud/bigquery/job/base.py", line 1047, in result
+    return super(_AsyncJob, self).result(timeout=timeout, retry=retry)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/google/api_core/future/polling.py", line 261, in result
+    raise self._exception
+google.api_core.exceptions.BadRequest: 400 Provided Schema does not match Table nfl-model-471509:raw_nflfastr.pbp$2016. Field tackle_for_loss_2_player_id has changed type from INTEGER to STRING; reason: invalid, message: Provided Schema does not match Table nfl-model-471509:raw_nflfastr.pbp$2016. Field tackle_for_loss_2_player_id has changed type from INTEGER to STRING

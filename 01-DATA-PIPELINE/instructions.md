@@ -101,6 +101,25 @@ Every ingest run produces a validation report written to `curated.data_quality_r
 
 A failing validation blocks publication to `curated.*`. The raw landing still happens so the data is preserved for inspection.
 
+### Derived Column Sanity Checks (required)
+
+Structural checks (row counts, nulls, schema) are necessary but not sufficient. Every derived binary or categorical column must also pass a semantic/logical distribution check. The validation suite must verify that derived columns fall within a domain-plausible range — not just that they exist and are non-null.
+
+**`curated.games.home_covered` (mandatory check):**
+Compute the home team's cover rate across all spread bins and confirm each bin falls in the 45–55% range. Because a closing spread is defined as the market's best estimate of the game outcome, any correct derivation of `home_covered` must produce approximately 50% coverage in every spread bin. A monotonic pattern (e.g., heavy favorites covering at <10%, heavy underdogs covering at >90%) is a definitive sign the sign convention is inverted — do not hand off to MODELING until this check passes.
+
+| Spread bin | Required home cover rate |
+|---|---|
+| Home favored by 10+ | 45–55% |
+| Home favored by 6–10 | 45–55% |
+| Home favored by 3–6 | 45–55% |
+| Near pick 'em | 45–55% |
+| Home underdog by 3–6 | 45–55% |
+| Home underdog by 6–10 | 45–55% |
+| Home underdog by 10+ | 45–55% |
+
+Add equivalent distribution checks for any other derived outcome labels before they are used as model targets.
+
 ## Scheduled Jobs
 
 - `weekly_ingest` — Tuesday 6am ET, full week refresh
@@ -111,7 +130,10 @@ All jobs run as Cloud Functions or Cloud Run jobs in project `nfl-model-471509`.
 
 ## Operating Principles
 
-1. **Idempotent everything.** Re-running an ingest for the same week must produce the same curated state. Use deterministic primary keys and `MERGE` semantics.
+1. **Fix the script before fixing the data. Never do a data-only remediation.**  
+   When a data quality issue is found in a curated table, the instinct is to fix the table directly (re-run the correct computation, write the correct rows to BigQuery). Do not stop there. The curated tables are rebuilt by scheduled pipeline scripts. A data fix that doesn't fix the script will be silently overwritten by the next scheduled run — potentially days or weeks later, after models and experiments have been run on what appeared to be clean data. Every remediation must: (1) fix the script that generates the bad data, (2) rebuild the data from the fixed script, (3) validate with sanity checks, (4) document in a `PIPELINE_REMEDIATION_NNN.md` file. If only the data is fixed, the remediation is incomplete regardless of whether the immediate validation passes. See INC-001 for a documented example of this failure mode.
+
+2. **Idempotent everything.** Re-running an ingest for the same week must produce the same curated state. Use deterministic primary keys and `MERGE` semantics.
 
 2. **Source isolation.** A failure in the FTN adapter must not block nflfastR ingest. Each adapter runs independently; the curated layer joins what's available.
 
@@ -151,3 +173,4 @@ All jobs run as Cloud Functions or Cloud Run jobs in project `nfl-model-471509`.
 - **Scraping aggressively.** Set realistic intervals, respect robots.txt, identify the user agent honestly.
 - **Treating raw data as authoritative.** Raw is a landing pad. Curated is the truth.
 - **Letting the schema drift.** If a source adds a column, decide deliberately whether to ingest it.
+- **Stopping at structural validation.** Row counts and null rates confirm the data arrived. They say nothing about whether derived fields are logically correct. Always run semantic distribution checks on computed columns before handing off.

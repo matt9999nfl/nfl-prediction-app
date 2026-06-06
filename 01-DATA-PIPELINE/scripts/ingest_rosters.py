@@ -10,6 +10,8 @@ import sys
 import time
 from datetime import datetime
 
+import pandas as pd
+
 sys.path.insert(0, ".")
 
 from google.cloud import bigquery
@@ -20,6 +22,7 @@ from scripts.bq_utils import (
     ensure_datasets,
     ensure_table_with_schema,
     get_client,
+    load_df_to_bq,
     normalize_dtypes,
 )
 
@@ -33,7 +36,7 @@ DEFAULT_SEASONS = list(range(2015, CURRENT_SEASON + 1))
 SCHEMA = [
     bigquery.SchemaField("season", "INTEGER"),
     bigquery.SchemaField("team", "STRING"),
-    bigquery.SchemaField("week", "INTEGER"),
+    bigquery.SchemaField("week", "FLOAT"),  # load_df_to_bq normalises int64→float64
 ]
 
 
@@ -49,6 +52,16 @@ def ingest_season(client: bigquery.Client, adapter: NflfastrAdapter, season: int
         return {"season": season, "rows": 0, "status": "VALIDATION_FAILED", "errors": result.errors}
 
     df["season"] = season
+
+    # Pre-coerce numeric roster columns to float64 before normalize_dtypes.
+    # These columns are logically numeric but come as object dtype in some seasons
+    # (non-numeric sentinel values or pandas dtype inference). Without this step,
+    # BQ locks the column as STRING in early seasons and rejects FLOAT in later ones.
+    _NUMERIC_ROSTER_COLS = ["draft_number", "draft_round", "height", "weight", "years_exp"]
+    for col in _NUMERIC_ROSTER_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     df = normalize_dtypes(df)
 
     job_config = bigquery.LoadJobConfig(
@@ -57,8 +70,7 @@ def ingest_season(client: bigquery.Client, adapter: NflfastrAdapter, season: int
         schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
     )
     full_table = f"{PROJECT}.{TABLE}${season}"
-    job = client.load_table_from_dataframe(df, full_table, job_config=job_config)
-    job.result()
+    load_df_to_bq(client, df, full_table, job_config)
 
     elapsed = round(time.time() - t0, 1)
     logger.info(f"Rosters {season}: loaded {len(df)} rows in {elapsed}s")

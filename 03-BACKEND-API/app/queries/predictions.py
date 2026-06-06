@@ -109,8 +109,7 @@ def get_production_predictions(
           predicted_home_cover_prob,
           predicted_side,
           actual_home_covered,
-          correct,
-          confidence_tier
+          correct
         FROM `{PROJECT}.experiments.backtest_predictions`
         WHERE experiment_id = @experiment_id
           AND season = @season

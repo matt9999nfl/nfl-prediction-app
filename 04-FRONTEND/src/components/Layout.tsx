@@ -45,7 +45,7 @@ export function Layout() {
               label="New Experiment"
               icon={<FlaskConical className="h-4 w-4" />}
             />
-            <NavItem to="/model" label="Experiments" icon={<Activity className="h-4 w-4" />} />
+            <NavItem to="/experiments" label="Experiments" icon={<Activity className="h-4 w-4" />} />
             <NavItem to="/frameworks" label="Frameworks" icon={<Layers className="h-4 w-4" />} />
             <NavItem to="/about" label="About" icon={<Info className="h-4 w-4" />} />
           </nav>

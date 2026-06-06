@@ -47,6 +47,10 @@ def list_features(
         str | None,
         Query(pattern="^(game_id|player_season_week|team_season_week)$"),
     ] = None,
+    include_deprecated: Annotated[
+        bool,
+        Query(description="Include deprecated (tombstoned) features. Default false."),
+    ] = False,
 ) -> FeatureListResponse:
     try:
         raw = fq.list_features(
@@ -54,6 +58,7 @@ def list_features(
             dataset=dataset,
             data_type=data_type,
             join_key_type=join_key_type,
+            include_deprecated=include_deprecated,
         )
     except Exception as exc:
         logger.error("[%s] Error building feature list: %s", request_id, exc, exc_info=True)

@@ -21,7 +21,7 @@ class Settings:
     bigquery_project: str = os.getenv("BIGQUERY_PROJECT", "nfl-model-471509")
     api_version: str = os.getenv("API_VERSION", "0.1.0")
     git_commit: str = os.getenv("GIT_COMMIT", "unknown")
-    owner_api_key: str | None = os.getenv("OWNER_API_KEY")  # Phase 3
+    owner_api_key: str | None = (os.getenv("OWNER_API_KEY") or "").strip() or None  # Phase 3
     default_season: int = _get_current_nfl_season()
 
     # ── Claude API (Step 5 — schema inference) ────────────────────────────────

@@ -32,6 +32,7 @@ from google.cloud import bigquery
 from app.config import settings
 from app.dependencies import decode_cursor, encode_cursor, get_bq_client, get_request_id, require_api_key
 from app.queries import experiments as eq
+from app.queries.features import get_deprecated_features_for_experiment
 from app.schemas.common import ErrorResponse, Pagination
 from app.schemas.experiments import (
     BacktestRun,
@@ -49,6 +50,7 @@ from app.schemas.experiments import (
     PredictionListResponse,
     RunProgress,
 )
+from app.schemas.features import DeprecatedFeatureInfo
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +102,13 @@ def list_experiments(
         )
 
     next_cursor = encode_cursor(offset + limit) if has_more else None
-    configs = [ExperimentConfig.model_validate(r) for r in rows]
+    configs: list[ExperimentConfig] = []
+    for r in rows:
+        # BUG-002: compute has_deprecated_features for each experiment in the list.
+        feature_refs = r.get("features") or []
+        dep = get_deprecated_features_for_experiment(feature_refs)
+        config = ExperimentConfig.model_validate({**r, "has_deprecated_features": bool(dep)})
+        configs.append(config)
     return ExperimentListResponse(
         data=configs,
         pagination=Pagination(next_cursor=next_cursor, has_more=has_more),
@@ -165,7 +173,14 @@ def get_experiment(
             request_id, experiment_id, exc,
         )
 
-    config = ExperimentConfig.model_validate(config_row)
+    # BUG-002: compute deprecated_features for this experiment.
+    feature_refs = config_row.get("features") or []
+    deprecated_raw = get_deprecated_features_for_experiment(feature_refs)
+    deprecated_features = [DeprecatedFeatureInfo.model_validate(d) for d in deprecated_raw]
+
+    config = ExperimentConfig.model_validate(
+        {**config_row, "has_deprecated_features": bool(deprecated_features)}
+    )
     runs = [BacktestRun.model_validate(r) for r in run_rows]
     latest = runs[0] if runs else None
     per_fold = [FoldResult.model_validate(r) for r in per_fold_rows]
@@ -175,6 +190,7 @@ def get_experiment(
         latest_run=latest,
         run_history=runs,
         per_fold=per_fold,
+        deprecated_features=deprecated_features,
     )
 
 

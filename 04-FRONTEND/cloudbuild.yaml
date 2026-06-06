@@ -1,44 +1,16 @@
-steps:
-  # Install dependencies
-  - name: node:20-slim
-    entrypoint: npm
-    args: ['install']
-    dir: '/workspace'
-
-  # Build with production API URL
-  - name: node:20-slim
-    entrypoint: npm
-    args: ['run', 'build']
-    dir: '/workspace'
-    env:
-      - 'VITE_API_BASE_URL=https://nfl-backend-api-rmaehdhzhq-uc.a.run.app'
-      - 'VITE_API_KEY='
-
-  # Sync dist/ to GCS bucket
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gsutil
-    args: ['-m', 'rsync', '-r', '-d', 'dist/', 'gs://nfl-frontend-nfl-model-471509/']
-    dir: '/workspace'
-
-  # Set index.html to no-cache
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gsutil
-    args:
-      - '-m'
-      - 'setmeta'
-      - '-h'
-      - 'Cache-Control:no-cache, no-store, must-revalidate'
-      - 'gs://nfl-frontend-nfl-model-471509/index.html'
-
-  # Set assets to immutable (Vite hashes filenames)
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: bash
-    args:
-      - '-c'
-      - |
-        gsutil -m setmeta \
-          -h "Cache-Control:public, max-age=31536000, immutable" \
-          "gs://nfl-frontend-nfl-model-471509/assets/**" || true
-
-options:
-  logging: CLOUD_LOGGING_ONLY
+# DEPRECATED — DO NOT USE
+#
+# This Cloud Build configuration is no longer the canonical frontend build pipeline.
+# GitHub Actions (.github/workflows/frontend-deploy.yml) is the sole authorised
+# deploy path for the frontend.
+#
+# This file is kept for historical reference only.  It MUST NOT be executed:
+#   - It hard-codes VITE_API_KEY= (empty string), which breaks authentication.
+#   - It does not read the API key from Secret Manager.
+#   - No Cloud Build trigger points to this file (verified 2026-05-24).
+#
+# To trigger a frontend deploy: push a commit touching 04-FRONTEND/ to main, or
+# run the GitHub Actions workflow manually from the Actions tab.
+#
+# If you need to trigger a manual deploy outside of GitHub Actions, follow the
+# steps in 05-DEVOPS/RUNBOOKS.md or contact the DevOps lead.

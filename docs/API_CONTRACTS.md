@@ -72,7 +72,20 @@ ExperimentConfig {
     test_seasons: int
     start_season: int
     end_season: int
+    game_universe: GameUniverseFilter | null   // optional; null = all regular-season games
   }
+
+GameUniverseFilter {
+  field:    "div_game" | "week"
+  operator: "eq" | "gte" | "lte" | "ne"
+  value:    bool | int          // bool for div_game, int for week
+}
+
+// Preset values the UI exposes (FRONTEND constructs these; API validates them):
+//   All games           → game_universe: null
+//   Divisional only     → { field: "div_game", operator: "eq",  value: true  }
+//   Late season W15-18  → { field: "week",     operator: "gte", value: 15    }
+//   Custom              → any valid field/operator/value combination
   model: {
     type: "xgboost" | "logistic_regression" | "random_forest"
     hyperparams: object
@@ -295,16 +308,50 @@ List experiment configs.
 ```
 
 #### `GET /api/v1/experiments/{experiment_id}`
-Full experiment config + latest run results.
+Full experiment config + latest run results + per-fold breakdown.
 
 **Response 200**
 ```json
 {
   "config": ExperimentConfig,
   "latest_run": BacktestRun | null,
-  "run_history": [BacktestRun]
+  "run_history": [BacktestRun],
+  "per_fold": [
+    {
+      "season": 2024,
+      "wins": 167,
+      "losses": 105,
+      "pushes": 4,
+      "hit_rate": 0.614,
+      "n_games": 272
+    }
+  ]
 }
 ```
+
+`per_fold` is sourced from `experiments.backtest_predictions` grouped by `season` for the experiment's `latest_run_id`. Returns `[]` if no run exists or no predictions are recorded.
+
+**Response 404:** `Error`
+
+---
+
+#### `GET /api/v1/experiments/{experiment_id}/feature-importance`
+Feature importances for the most recent run of an experiment.
+
+Sourced from the `feature_importances` JSON column in `experiments.backtest_runs` for the `latest_run_id`. Returns importances sorted descending.
+
+**Response 200**
+```json
+{
+  "run_id": "uuid | null",
+  "features": [
+    { "feature": "home_ol_rush_epa_per_att", "importance": 0.0842 },
+    { "feature": "away_ol_pass_epa_per_att", "importance": 0.0601 }
+  ]
+}
+```
+
+Returns `{ "run_id": null, "features": [] }` if no run exists or no importance data has been recorded.
 
 **Response 404:** `Error`
 
@@ -490,19 +537,27 @@ List all features available to the experiment builder — both nflfastR-derived 
 ### Teams (read-only)
 
 #### `GET /api/v1/teams/{team}/ol-rating`
-OL rating time series for a team (from current production experiment).
+Cumulative season-to-date OL rating history for a team, computed directly from `curated.plays`.
 
-**Query params:** `season`, `metric` (composite | pass_block | run_block)
+For each (season, week) where the team appeared as the offensive team, returns the running average of `ol_rush_epa_per_att` and `ol_pass_epa_per_att` across all plays from week 1 through that week of that season. Matches the look-ahead-safe cumulation logic used by the MODELING layer.
+
+**Query params:** `season` (int, optional — restricts to a single season)
 
 **Response 200**
 ```json
 {
   "team": "KC",
-  "season": 2025,
-  "metric": "composite",
-  "series": [{ "week": 1, "rating": 0.74, "rank": 6 }]
+  "ratings": [
+    { "season": 2024, "week": 1, "ol_rush_epa_per_att": 0.12, "ol_pass_epa_per_att": 0.08 },
+    { "season": 2024, "week": 2, "ol_rush_epa_per_att": 0.14, "ol_pass_epa_per_att": 0.10 }
+  ]
 }
 ```
+
+`ol_rush_epa_per_att` and `ol_pass_epa_per_att` may be null for weeks with no qualifying plays. Returns `{ "team": "KC", "ratings": [] }` if the team has no play history.
+
+**Response 400:** invalid team code format
+**Response 502:** `Error`
 
 ---
 

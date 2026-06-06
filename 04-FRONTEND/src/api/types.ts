@@ -84,14 +84,14 @@ export type DataType = 'numeric' | 'categorical' | 'boolean'
 export interface Dataset {
   dataset_id: string
   name: string
-  description: string
+  description: string | null
   upload_date: string
-  join_key_type: JoinKeyType
-  row_count: number
-  column_count: number
+  join_key_type: JoinKeyType | null
+  row_count: number | null
+  column_count: number | null
   license_tag: LicenseTag
   status: DatasetStatus
-  schema_source: 'form' | 'ai_assisted'
+  schema_source: 'form' | 'ai_assisted' | null
 }
 
 export interface DatasetColumn {
@@ -141,6 +141,12 @@ export interface InferSchemaResponse {
 
 // ── Experiments ───────────────────────────────────────────────────────────────
 
+export interface GameUniverseFilter {
+  field: 'div_game' | 'week'
+  operator: 'eq' | 'gte' | 'lte' | 'ne'
+  value: boolean | number
+}
+
 export type ExperimentTarget =
   | 'ats_cover'
   | 'outright_winner'
@@ -166,6 +172,12 @@ export interface ExperimentFeature {
   semantic_name: string
 }
 
+// BUG-002: deprecated feature info returned by the detail endpoint
+export interface DeprecatedFeatureInfo {
+  name: string
+  deprecated_reason?: string | null
+}
+
 export interface ExperimentConfig {
   experiment_id: string
   name: string
@@ -184,6 +196,7 @@ export interface ExperimentConfig {
     test_seasons: number
     start_season: number
     end_season: number
+    game_universe?: GameUniverseFilter | null
   }
   model: {
     type: ModelType
@@ -191,6 +204,8 @@ export interface ExperimentConfig {
   }
   status: ExperimentStatus
   gate_passed: boolean | null
+  /** BUG-002: lightweight flag on list items — true if any feature is deprecated */
+  has_deprecated_features?: boolean
 }
 
 export interface BacktestRun {
@@ -206,10 +221,32 @@ export interface BacktestRun {
   notes: string | null
 }
 
+// ── Per-fold results (new field from BACKEND-API 3.1) ─────────────────────────
+
+export interface FoldResult {
+  season: number
+  wins: number
+  losses: number
+  pushes: number
+  hit_rate: number   // 0.0 – 1.0
+  n_games: number
+}
+
 export interface ExperimentDetail {
   config: ExperimentConfig
   latest_run: BacktestRun | null
   run_history: BacktestRun[]
+  /** Per-season fold results. New field added by BACKEND-API 3.1. */
+  per_fold?: FoldResult[]
+  /** BUG-002: features referenced by the experiment that are no longer in the active catalog. */
+  deprecated_features?: DeprecatedFeatureInfo[]
+}
+
+// ── Feature importance (BACKEND-API 3.2) ─────────────────────────────────────
+
+export interface FeatureImportanceResponse {
+  run_id: string | null
+  features: Array<{ feature: string; importance: number }>
 }
 
 export interface RunExperimentResponse {
@@ -267,6 +304,18 @@ export interface CreateFrameworkPayload {
   name: string
   description: string
   base_experiment_id?: string
+}
+
+// ── Teams ─────────────────────────────────────────────────────────────────────
+
+export interface TeamOLRating {
+  team: string
+  ratings: Array<{
+    season: number
+    week: number
+    ol_rush_epa_per_att: number
+    ol_pass_epa_per_att: number
+  }>
 }
 
 // ── Features ──────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ from typing import Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import Pagination
+from app.schemas.features import DeprecatedFeatureInfo
 
 
 # ── Phase 4 / Deliverable 3.1: Per-fold result ───────────────────────────────
@@ -94,6 +95,7 @@ class ExperimentConfig(BaseModel):
     model: ModelConfig
     status: Literal["draft", "running", "complete", "failed"]
     gate_passed: bool | None = None
+    has_deprecated_features: bool = False   # BUG-002: lightweight flag for list UI
 
 
 class BacktestRun(BaseModel):
@@ -116,6 +118,7 @@ class ExperimentDetailResponse(BaseModel):
     latest_run: BacktestRun | None = None
     run_history: list[BacktestRun] = Field(default_factory=list)
     per_fold: list[FoldResult] = Field(default_factory=list)
+    deprecated_features: list[DeprecatedFeatureInfo] = Field(default_factory=list)  # BUG-002
 
 
 class ExperimentListResponse(BaseModel):

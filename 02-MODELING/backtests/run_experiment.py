@@ -87,6 +87,7 @@ from backtests.bq_writer import (
     setup_experiments_tables,
     write_backtest_run,
     write_backtest_predictions,
+    write_error_run,
 )
 from models.xgb_v2 import OLXGBModelV2
 from models.ol_xgb import OLXGBModel
@@ -317,7 +318,7 @@ def _resolve_dataset_join_info(
             f"join_key info not found for dataset_id={dataset_id!r}; "
             "defaulting to team_season_week with identity column mapping"
         )
-        return "team_season_week", {{}}
+        return "team_season_week", {}
 
     row = dict(rows[0])
     jkt = row.get("join_key_type") or "team_season_week"
@@ -328,7 +329,7 @@ def _resolve_dataset_join_info(
             import json
             jkc = json.loads(raw_jkc)
         except Exception:
-            jkc = {{}}
+            jkc = {}
     elif isinstance(raw_jkc, dict):
         jkc = raw_jkc
     else:
@@ -449,9 +450,27 @@ def build_feature_matrix(
 
     # ── 2. Identify which curated per-team features the config requests ───────
     curated_entries  = [f for f in config_features if f["dataset"] == "curated"]
-    requested_cols   = [f["column"] for f in curated_entries]
 
-    # Validate requested columns against known catalog
+    # Normalise column names: strip home_/away_ prefix if present.
+    # The frontend may store features with home_/away_ prefixes (e.g.
+    # "home_ol_rush_epa_per_att") but the runner expects base names
+    # ("ol_rush_epa_per_att") and auto-adds prefixes when building the matrix.
+    def _base_col(col: str) -> str:
+        for pfx in ("home_", "away_"):
+            if col.startswith(pfx):
+                return col[len(pfx):]
+        return col
+
+    # Deduplicate after stripping prefixes (home_X and away_X both map to X)
+    seen: set[str] = set()
+    requested_cols: list[str] = []
+    for entry in curated_entries:
+        base = _base_col(entry["column"])
+        if base not in seen:
+            seen.add(base)
+            requested_cols.append(base)
+
+    # Validate against known catalog
     unknown = [c for c in requested_cols if c not in ALL_CURATED_TEAM_FEATURES]
     if unknown:
         raise ValueError(
@@ -460,14 +479,21 @@ def build_feature_matrix(
         )
 
     # ── 3. Build game feature matrix for selected curated features ────────────
+    # add_rest_differential (called below) always requires home_rest_days /
+    # away_rest_days to be present, because rest_differential is always added
+    # to model_feat_cols.  Ensure rest_days is in the columns passed to
+    # build_game_feature_matrix even when the config didn't request it
+    # explicitly; it will NOT be added to model_feat_cols in that case.
+    matrix_cols = list(dict.fromkeys(requested_cols + ["rest_days"]))
+
     logger.info(
         f"Building game feature matrix with {len(requested_cols)} "
-        f"per-team curated features ..."
+        f"per-team curated features (+ rest_days for differential) ..."
     )
     game_features = build_game_feature_matrix(
         games,
         team_features,
-        team_feature_cols=requested_cols,
+        team_feature_cols=matrix_cols,
     )
     game_features = add_rest_differential(game_features)
 
@@ -544,6 +570,7 @@ def main() -> None:
     end_season    = int(methodology["end_season"])
     train_seasons = int(methodology["train_seasons"])
     test_seasons  = int(methodology.get("test_seasons", 1))
+    random_seed   = int(methodology.get("random_seed", 42))
 
     # Unpack evaluation / gate thresholds
     gate_hit_rate  = float(evaluation.get("success_threshold", PHASE2_GATE_HIT_RATE))
@@ -589,6 +616,7 @@ def main() -> None:
     gate_passed = False
     error_msg: Optional[str] = None
     completed_at: Optional[datetime] = None
+    bq_run_written = False  # True once write_backtest_run succeeds
 
     try:
         # ── 3. Load data ──────────────────────────────────────────────────────
@@ -600,6 +628,21 @@ def main() -> None:
         assert len(games) > 2_800,   f"Unexpected game count: {len(games)}"
         logger.info(f"Loaded {len(plays):,} plays, {len(games):,} games")
 
+        # ── 3b. Shuffle labels (leakage-detection mode) ───────────────────────
+        shuffle_labels = bool(methodology.get("shuffle_labels", False))
+        if shuffle_labels:
+            logger.warning(
+                "SHUFFLE_LABELS=True — this is a leakage-detection run. "
+                "home_covered will be randomly permuted within each season. "
+                "gate_passed will be forced to False regardless of hit rate."
+            )
+            rng = np.random.default_rng(random_seed)
+            for season in games["season"].unique():
+                mask = games["season"] == season
+                games.loc[mask, "home_covered"] = rng.permutation(
+                    games.loc[mask, "home_covered"].values
+                )
+
         # ── 4. Build feature matrix ───────────────────────────────────────────
         game_features, model_feat_cols = build_feature_matrix(
             client, plays, games, config["features"]
@@ -608,6 +651,46 @@ def main() -> None:
             f"Feature matrix built: {len(game_features):,} games, "
             f"{len(model_feat_cols)} model features"
         )
+
+        # ── 4b. Apply game universe filter (optional) ─────────────────────────
+        game_universe = methodology.get("game_universe")
+        if game_universe:
+            field    = game_universe["field"]
+            operator = game_universe.get("operator", "eq")
+            value    = game_universe["value"]
+
+            if field not in game_features.columns:
+                raise ValueError(
+                    f"game_universe filter field {field!r} not found in game_features columns. "
+                    f"Available: {list(game_features.columns)}"
+                )
+
+            before = len(game_features)
+            if operator == "eq":
+                game_features = game_features[game_features[field] == value].copy()
+            elif operator == "gte":
+                game_features = game_features[game_features[field] >= value].copy()
+            elif operator == "lte":
+                game_features = game_features[game_features[field] <= value].copy()
+            elif operator == "ne":
+                game_features = game_features[game_features[field] != value].copy()
+            else:
+                raise ValueError(
+                    f"Unsupported game_universe operator {operator!r}. "
+                    "Supported: eq, gte, lte, ne"
+                )
+
+            after = len(game_features)
+            logger.info(
+                f"game_universe filter applied: {field} {operator} {value!r} — "
+                f"{before:,} → {after:,} games ({before - after:,} excluded)"
+            )
+
+            if after < 100:
+                raise ValueError(
+                    f"game_universe filter left only {after} games — too few to run a "
+                    "meaningful backtest. Widen the filter or use the full universe."
+                )
 
         # ── 5. Walk-forward backtest ──────────────────────────────────────────
         result = run_walk_forward(
@@ -619,8 +702,13 @@ def main() -> None:
             folds_override=folds,
             gate_hit_rate=gate_hit_rate,
             gate_min_games=gate_min_games,
+            random_seed=random_seed,
         )
         gate_passed = result.gate_passed
+
+        # Force gate_passed = False for shuffle-label runs (never promote)
+        if shuffle_labels:
+            gate_passed = False
 
         # ── 6. Write results to BigQuery ──────────────────────────────────────
         logger.info("Writing results to BigQuery ...")
@@ -628,11 +716,20 @@ def main() -> None:
 
         completed_at = datetime.now(timezone.utc)
 
+        notes_str = config.get("description") or ""
+        if shuffle_labels:
+            notes_str = (notes_str + " [SHUFFLE_LABELS=True]").strip()
+        if game_universe:
+            notes_str = (
+                notes_str
+                + f" [UNIVERSE: {game_universe['field']} {game_universe.get('operator','eq')} {game_universe['value']}]"
+            ).strip()
+
         write_backtest_run(
             client,
             result,
             model_feat_cols,
-            notes=config.get("description") or "",
+            notes=notes_str,
             training_window_years=train_seasons,
             run_id=run_id,
             experiment_config_id=experiment_config_id,
@@ -643,6 +740,8 @@ def main() -> None:
             error_message=None,
             feature_importances=result.feature_importance_dict,
         )
+        bq_run_written = True
+
         write_backtest_predictions(
             client,
             result,
@@ -651,25 +750,28 @@ def main() -> None:
         )
         logger.info("BigQuery writes complete")
 
-        # ── 7. Write local artifacts ──────────────────────────────────────────
-        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        # ── 7. Write local artifacts (best-effort — failures do NOT crash the job) ──
+        try:
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-        report_path = REPORTS_DIR / f"{run_id}_report.md"
-        report_path.write_text(format_backtest_report(result), encoding="utf-8")
-        logger.info(f"Report: {report_path}")
+            report_path = REPORTS_DIR / f"{run_id}_report.md"
+            report_path.write_text(format_backtest_report(result), encoding="utf-8")
+            logger.info(f"Report: {report_path}")
 
-        fi_path = REPORTS_DIR / f"{run_id}_feature_importance.json"
-        if result.avg_feature_importance is not None:
-            fi_path.write_text(
-                result.avg_feature_importance.to_json(orient="records", indent=2),
-                encoding="utf-8",
-            )
+            fi_path = REPORTS_DIR / f"{run_id}_feature_importance.json"
+            if result.avg_feature_importance is not None:
+                fi_path.write_text(
+                    result.avg_feature_importance.to_json(orient="records", indent=2),
+                    encoding="utf-8",
+                )
 
-        preds_path = REPORTS_DIR / f"{run_id}_predictions.csv"
-        result.all_predictions().to_csv(preds_path, index=False)
+            preds_path = REPORTS_DIR / f"{run_id}_predictions.csv"
+            result.all_predictions().to_csv(preds_path, index=False)
 
-        season_path = REPORTS_DIR / f"{run_id}_by_season.csv"
-        result.per_season_table().to_csv(season_path, index=False)
+            season_path = REPORTS_DIR / f"{run_id}_by_season.csv"
+            result.per_season_table().to_csv(season_path, index=False)
+        except Exception as artifact_exc:
+            logger.warning(f"Local artifact writes failed (non-fatal): {artifact_exc}")
 
         # ── Print summary ─────────────────────────────────────────────────────
         gate_str = "PASSED" if gate_passed else "NOT MET"
@@ -690,6 +792,18 @@ def main() -> None:
     except Exception as exc:
         error_msg = str(exc)
         logger.exception(f"Backtest failed: {exc}")
+        # Best-effort: write a failed row to backtest_runs so the API can surface
+        # the error_message.  Skip if write_backtest_run already succeeded (so we
+        # don't shadow the real metrics row with a duplicate error row).
+        if not bq_run_written:
+            write_error_run(
+                client,
+                run_id=run_id,
+                experiment_config_id=experiment_config_id,
+                name=config.get("name", f"Run {run_id[:8]}"),
+                error_message=error_msg,
+                training_window_years=train_seasons,
+            )
         raise
 
     finally:

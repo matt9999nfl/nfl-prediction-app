@@ -227,9 +227,9 @@ export function DatasetsPage() {
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                    <span>{ds.row_count.toLocaleString()} rows</span>
-                    <span>{ds.column_count} columns</span>
-                    <span>Join: {ds.join_key_type}</span>
+                    <span>{ds.row_count != null ? ds.row_count.toLocaleString() : '—'} rows</span>
+                    <span>{ds.column_count != null ? ds.column_count : '—'} columns</span>
+                    <span>Join: {ds.join_key_type ?? '—'}</span>
                     <span>{ds.license_tag}</span>
                   </div>
                   <p className="text-xs text-muted-foreground">

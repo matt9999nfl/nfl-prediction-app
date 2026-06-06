@@ -231,6 +231,7 @@ def run_walk_forward(
     folds_override: list[tuple[list[int], int]] | None = None,
     gate_hit_rate: float = PHASE2_GATE_HIT_RATE,
     gate_min_games: int = PHASE2_GATE_MIN_GAMES,
+    random_seed: int = 42,
 ) -> BacktestResult:
     """
     Run the walk-forward backtest.
@@ -249,6 +250,7 @@ def run_walk_forward(
                       When None, falls back to the hardcoded FOLDS constant (Phase 1 behaviour).
     gate_hit_rate   : Hit-rate threshold for gate_passed evaluation.
     gate_min_games  : Minimum evaluated games for gate_passed evaluation.
+    random_seed     : Random seed passed to model constructor each fold. Default 42.
 
     Returns
     -------
@@ -289,7 +291,7 @@ def run_walk_forward(
         )
 
         # ── Fit model ──────────────────────────────────────────────────────
-        model = _model_class()
+        model = _model_class(random_seed=random_seed)
         model.fit(X_train, y_train)
 
         # ── Predict ────────────────────────────────────────────────────────

@@ -185,6 +185,91 @@ def main(client=None):
     row(f"- sack nulls:   {int(r['sack_nulls'])} / {int(r['total']):,}  {'✅' if sack_ok else '❌'}")
 
     # ------------------------------------------------------------------ #
+    # 3b. Semantic distribution check — home_covered cover rate           #
+    # ------------------------------------------------------------------ #
+    h("3b. Semantic Check — home_covered Cover Rate")
+
+    row("""
+This check guards against a sign-inversion bug in `derive_home_covered`.
+Because closing spreads represent the market's best estimate, the home team
+cover rate in every spread bin must be approximately 50% (efficient market
+hypothesis). A monotonic pattern (e.g. heavy favourites covering at <10%,
+heavy underdogs covering at >90%) is a definitive sign of label inversion.
+See INC-001 and PIPELINE_REMEDIATION_002.md for history.
+""")
+
+    cover_rate_sql = f"""
+        WITH bins AS (
+            SELECT
+                CASE
+                    WHEN home_spread_close <= -10 THEN 'home_fav_10+'
+                    WHEN home_spread_close <= -3  THEN 'home_fav_3-10'
+                    WHEN home_spread_close < 3    THEN 'pick_em'
+                    WHEN home_spread_close < 10   THEN 'home_dog_3-10'
+                    ELSE                               'home_dog_10+'
+                END AS bucket,
+                home_covered
+            FROM `{PROJECT}.curated.games`
+            WHERE season BETWEEN 2015 AND {CURRENT_SEASON}
+              AND home_covered IS NOT NULL
+        )
+        SELECT
+            bucket,
+            COUNTIF(home_covered) AS covers,
+            COUNT(*) AS total,
+            ROUND(100 * COUNTIF(home_covered) / COUNT(*), 1) AS cover_pct
+        FROM bins
+        GROUP BY bucket
+        ORDER BY bucket
+    """
+    cover_df = run_query(client, cover_rate_sql)
+
+    row("| Spread Bucket | Covers | Total | Cover % | Check |")
+    row("|---------------|--------|-------|---------|-------|")
+    bin_all_pass = True
+    for _, r in cover_df.iterrows():
+        bucket = r["bucket"]
+        covers = int(r["covers"])
+        total = int(r["total"])
+        pct = float(r["cover_pct"])
+        ok = 45.0 <= pct <= 55.0
+        bin_all_pass &= ok
+        all_pass &= check(ok, f"cover_rate_{bucket}", check_results)
+        row(f"| {bucket} | {covers} | {total} | {pct:.1f}% | {'✅' if ok else '❌'} |")
+
+    # Overall cover rate check (tighter band: 46–54%)
+    overall_sql = f"""
+        SELECT
+            COUNTIF(home_covered) AS covers,
+            COUNT(*) AS total,
+            ROUND(100 * COUNTIF(home_covered) / COUNT(*), 1) AS cover_pct,
+            MIN(season) AS min_season,
+            MAX(season) AS max_season
+        FROM `{PROJECT}.curated.games`
+        WHERE home_covered IS NOT NULL
+    """
+    overall_df = run_query(client, overall_sql)
+    ov = overall_df.iloc[0]
+    ov_covers = int(ov["covers"])
+    ov_total = int(ov["total"])
+    ov_pct = float(ov["cover_pct"])
+    ov_min_s = int(ov["min_season"])
+    ov_max_s = int(ov["max_season"])
+    ov_ok = 46.0 <= ov_pct <= 54.0
+    all_pass &= check(ov_ok, "overall_cover_rate_46_to_54", check_results)
+
+    if ov_ok:
+        row(f"\n- **Overall cover rate ({ov_min_s}–{ov_max_s}):** {ov_pct:.1f}%  ({ov_covers}/{ov_total})  ✅")
+    else:
+        row(
+            f"\n- **Overall cover rate ({ov_min_s}–{ov_max_s}):** {ov_pct:.1f}%  ({ov_covers}/{ov_total})  ❌"
+            f"\n  **ERROR:** home cover rate {ov_pct:.1f}% is outside the 46–54% sanity band for seasons"
+            f" {ov_min_s}–{ov_max_s}. This is a strong indicator of a sign-inversion bug in"
+            f" `derive_home_covered`. Do NOT hand off to MODELING until this is resolved."
+            f" See INC-001 and PIPELINE_REMEDIATION_002.md."
+        )
+
+    # ------------------------------------------------------------------ #
     # 4. Integrity checks                                                  #
     # ------------------------------------------------------------------ #
     h("4. Integrity Checks")

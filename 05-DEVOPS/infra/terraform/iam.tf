@@ -18,6 +18,12 @@ resource "google_service_account" "pipeline" {
   description  = "Service account for Cloud Run Job data pipeline"
 }
 
+resource "google_service_account" "dataset_processor" {
+  account_id   = "nfl-dataset-processor-sa"
+  display_name = "NFL Prediction App — Dataset Processor"
+  description  = "Service account for Cloud Run Job dataset upload processor"
+}
+
 resource "google_service_account" "terraform_ci" {
   account_id   = "terraform-ci"
   display_name = "Terraform CI"
@@ -90,6 +96,46 @@ resource "google_secret_manager_secret_iam_member" "api_owner_key" {
   secret_id = "OWNER_API_KEY"
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.api.email}"
+}
+
+# ── Dataset Processor Service Account IAM Roles ────────────────────────────────
+
+# Read the raw uploaded file from GCS
+resource "google_storage_bucket_iam_member" "dataset_processor_uploads_reader" {
+  bucket = "nfl-model-471509-uploads"
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.dataset_processor.email}"
+}
+
+# Write to platform.datasets and platform.dataset_columns
+resource "google_bigquery_dataset_iam_member" "dataset_processor_editor_platform" {
+  dataset_id = "platform"
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.dataset_processor.email}"
+}
+
+# Create and write to user_datasets.{id} tables
+resource "google_bigquery_dataset_iam_member" "dataset_processor_editor_user_datasets" {
+  dataset_id = "user_datasets"
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.dataset_processor.email}"
+}
+
+# Required to run BQ jobs (queries/loads)
+resource "google_project_iam_member" "dataset_processor_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.dataset_processor.email}"
+}
+
+# ── API SA: permission to invoke the dataset processor job ─────────────────────
+
+resource "google_cloud_run_v2_job_iam_member" "api_invoke_dataset_processor" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_job.dataset_processor.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.api.email}"
 }
 
 # ── Runner Service Account IAM Roles ───────────────────────────────────────────

@@ -36,6 +36,8 @@ import type {
   Framework,
   CreateFrameworkPayload,
   Feature,
+  FeatureImportanceResponse,
+  TeamOLRating,
 } from './types'
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -266,6 +268,33 @@ export function useDeleteFramework() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['frameworks'] })
     },
+  })
+}
+
+export function useFeatureImportance(
+  experimentId: string,
+  options?: { enabled?: boolean },
+) {
+  return useQuery<FeatureImportanceResponse>({
+    queryKey: ['experiments', experimentId, 'feature-importance'],
+    queryFn: () =>
+      api.get<FeatureImportanceResponse>(
+        `/api/v1/experiments/${experimentId}/feature-importance`,
+      ),
+    enabled: (options?.enabled ?? true) && Boolean(experimentId),
+    staleTime: 60_000,
+  })
+}
+
+// ── Teams ─────────────────────────────────────────────────────────────────────
+
+export function useTeamOLRating(team: string) {
+  return useQuery<TeamOLRating>({
+    queryKey: ['teams', team, 'ol-rating'],
+    // TODO: wire to live endpoint once deployed (BACKEND-API 3.2 / item 3.5)
+    queryFn: () => api.get<TeamOLRating>(`/api/v1/teams/${team}/ol-rating`),
+    enabled: Boolean(team),
+    staleTime: 300_000,
   })
 }
 

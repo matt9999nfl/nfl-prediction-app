@@ -15,7 +15,16 @@ Schema design (Phase 2+):
     )
 
 Tables are created idempotently via setup_experiments_tables().
-Phase 2 ALTER TABLE calls are omitted — all columns exist in the current table schema.
+
+Implementation notes:
+  write_backtest_run uses insert_rows_json (streaming insert) rather than
+  load_table_from_dataframe because pyarrow 12.x does not support BigQuery JSON
+  column types.  The runs table has JSON columns (features, seasons_evaluated,
+  success_criteria, feature_importances); these must be passed as json.dumps()
+  strings — the streaming API requires JSON-typed columns to arrive as strings.
+
+  write_backtest_predictions uses load_table_from_dataframe because the
+  predictions table has no JSON columns, only primitive types.
 """
 
 import json
@@ -35,10 +44,11 @@ PREDS_TABLE = f"{PROJECT}.{DATASET}.backtest_predictions"
 
 # ── Schema definitions ────────────────────────────────────────────────────────
 #
-# experiment_id is ALWAYS the experiment config UUID (from platform.experiment_configs).
-# run_id        is a unique run identifier (NFL_RUN_ID env var or runner-generated).
+# RUNS_SCHEMA is used only for table creation (create_table is idempotent).
+# The actual row inserts use insert_rows_json, so pyarrow is not involved.
 #
-# All metric fields are NULLABLE so partial/failed runs can still write a row.
+# PREDS_SCHEMA is used for both table creation and load_table_from_dataframe.
+# It has no JSON-typed columns, so pyarrow handles it correctly.
 
 RUNS_SCHEMA = [
     bigquery.SchemaField("run_id",               "STRING",    mode="NULLABLE"),
@@ -125,6 +135,13 @@ def _ensure_table(
     logger.info(f"Table ready: {table_id}")
 
 
+def _ts(dt: datetime | None) -> str | None:
+    """Convert a datetime to a BigQuery-compatible ISO-8601 string, or None."""
+    if dt is None:
+        return None
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def write_backtest_run(
     client: bigquery.Client,
     result,                           # BacktestResult from walk_forward
@@ -141,7 +158,12 @@ def write_backtest_run(
     error_message: str | None = None,
     feature_importances: dict | None = None,
 ) -> None:
-    """Insert one row into experiments.backtest_runs.
+    """Insert one row into experiments.backtest_runs via streaming insert.
+
+    Uses insert_rows_json rather than load_table_from_dataframe because
+    pyarrow 12.x does not natively support BigQuery JSON column types.
+    insert_rows_json sends rows directly to the BigQuery streaming API, which
+    handles JSON-typed columns natively.
 
     experiment_id in the written row is set to experiment_config_id (the config UUID)
     when provided, so the API's WHERE experiment_id = <config UUID> queries find it.
@@ -152,20 +174,26 @@ def write_backtest_run(
     test_seasons = [fr.test_season for fr in result.folds]
 
     # experiment_id in backtest_runs must be the config UUID so the API can find it.
-    # Fall back to result.experiment_id (runner's internal ID) for Phase 1 compatibility.
     experiment_id_to_write = experiment_config_id or result.experiment_id
 
     # run_id uniquely identifies this run; used as the join key to backtest_predictions.
     run_id_to_write = run_id or result.experiment_id
 
+    now = datetime.now(timezone.utc)
+
+    # For insert_rows_json:
+    #   - TIMESTAMP columns must be ISO-8601 strings
+    #   - JSON columns must be json.dumps() strings — the streaming API does NOT
+    #     auto-serialize Python dicts/lists for JSON-typed columns
+    #   - NULL values should be None (omitted keys also work, but explicit None is clearer)
     row = {
         "run_id":                run_id_to_write,
         "experiment_id":         experiment_id_to_write,
         "name":                  result.name,
-        "run_at":                datetime.now(timezone.utc),
-        "completed_at":          completed_at or datetime.now(timezone.utc),
+        "run_at":                _ts(now),
+        "completed_at":          _ts(completed_at or now),
         "model_type":            "xgboost",
-        "features":              json.dumps(features_used),
+        "features":              json.dumps(features_used) if features_used is not None else None,
         "status":                "failed" if error_message else "complete",
         "ats_hit_rate":          result.overall_hit_rate,
         "ats_record_wins":       result.total_wins,
@@ -174,7 +202,7 @@ def write_backtest_run(
         "n_games_evaluated":     result.total_n_games,
         "gate_passed":           result.gate_passed,
         "training_window_years": training_window_years,
-        "seasons_evaluated":     json.dumps(test_seasons),
+        "seasons_evaluated":     json.dumps(test_seasons) if test_seasons is not None else None,
         "folds_complete":        folds_complete,
         "folds_total":           folds_total,
         "error_message":         error_message,
@@ -183,14 +211,58 @@ def write_backtest_run(
         "feature_importances":   json.dumps(feature_importances) if feature_importances is not None else None,
     }
 
-    df = pd.DataFrame([row])
-    job_config = bigquery.LoadJobConfig(
-        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        schema=RUNS_SCHEMA,
+    errors = client.insert_rows_json(RUNS_TABLE, [row])
+    if errors:
+        raise RuntimeError(
+            f"backtest_runs streaming insert failed: {errors}"
+        )
+    logger.info(
+        f"backtest_runs: wrote 1 row "
+        f"(experiment_id={experiment_id_to_write}, run_id={run_id_to_write}, "
+        f"status={row['status']})"
     )
-    job = client.load_table_from_dataframe(df, RUNS_TABLE, job_config=job_config)
-    job.result()
-    logger.info(f"backtest_runs: wrote 1 row for experiment {result.experiment_id}")
+
+
+def write_error_run(
+    client: bigquery.Client,
+    run_id: str,
+    experiment_config_id: str,
+    name: str,
+    error_message: str,
+    training_window_years: int = 4,
+) -> None:
+    """
+    Write a minimal 'failed' row to backtest_runs when the backtest itself
+    crashes before write_backtest_run can be called.  This ensures the API can
+    surface the error_message rather than showing a blank run history.
+
+    Uses insert_rows_json so it has no dependency on pyarrow.
+    """
+    now_str = _ts(datetime.now(timezone.utc))
+    row = {
+        "run_id":                run_id,
+        "experiment_id":         experiment_config_id,
+        "name":                  name,
+        "run_at":                now_str,
+        "completed_at":          now_str,
+        "model_type":            "xgboost",
+        "features":              json.dumps([]),
+        "status":                "failed",
+        "error_message":         error_message[:4096],  # truncate for safety
+        "training_window_years": training_window_years,
+    }
+    try:
+        errors = client.insert_rows_json(RUNS_TABLE, [row])
+        if errors:
+            logger.warning(f"write_error_run streaming insert returned errors: {errors}")
+        else:
+            logger.info(
+                f"backtest_runs: wrote error row "
+                f"(experiment_id={experiment_config_id}, run_id={run_id})"
+            )
+    except Exception as e:
+        # Best-effort; don't let this shadow the original exception.
+        logger.warning(f"write_error_run: could not write error row: {e}")
 
 
 def write_backtest_predictions(
@@ -201,6 +273,10 @@ def write_backtest_predictions(
 ) -> None:
     """
     Insert all fold predictions into experiments.backtest_predictions.
+
+    Uses load_table_from_dataframe (parquet upload) because the predictions
+    table has no JSON-typed columns — all columns are primitive types that
+    pyarrow handles correctly.
 
     run_id and experiment_id must match what was written to backtest_runs so the
     API can join: backtest_predictions.run_id = backtest_runs.run_id.
@@ -218,9 +294,12 @@ def write_backtest_predictions(
     # run_id is the join key to backtest_runs.
     preds_out.insert(0, "run_id", run_id or result.experiment_id)
 
-    # actual_home_covered must be nullable bool; correct must be nullable Int64
-    preds_out["actual_home_covered"] = preds_out["actual_home_covered"].astype(object)
-    preds_out["correct"] = preds_out["correct"].astype(object)
+    # Use nullable pandas dtypes so pyarrow produces proper nullable columns
+    # (avoids object-array ambiguity that can confuse pyarrow type inference).
+    preds_out["actual_home_covered"] = preds_out["actual_home_covered"].astype(
+        pd.BooleanDtype()
+    )
+    preds_out["correct"] = preds_out["correct"].astype(pd.Int64Dtype())
 
     job_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
@@ -230,7 +309,8 @@ def write_backtest_predictions(
     job.result()
     logger.info(
         f"backtest_predictions: wrote {len(preds_out):,} rows "
-        f"(experiment_id={experiment_config_id or result.experiment_id}, run_id={run_id or result.experiment_id})"
+        f"(experiment_id={experiment_config_id or result.experiment_id}, "
+        f"run_id={run_id or result.experiment_id})"
     )
 
 

@@ -36,7 +36,11 @@ def _run_query(
 
 
 def _game_select() -> str:
-    """Standard column list for curated.games → Game schema."""
+    """Standard column list for curated.games → Game schema.
+
+    `status` is derived: curated.games has no status column.
+    Games with non-null scores are 'complete'; null scores are 'scheduled'.
+    """
     return """
         game_id,
         season,
@@ -46,7 +50,8 @@ def _game_select() -> str:
         away_team,
         home_score,
         away_score,
-        status,
+        IF(home_score IS NOT NULL AND away_score IS NOT NULL,
+           'complete', 'scheduled')  AS status,
         home_spread_close,
         total_close,
         home_covered,
@@ -91,8 +96,11 @@ def list_games(
         params.append(bigquery.ScalarQueryParameter("team", "STRING", team))
 
     if status is not None:
-        conditions.append("status = @status")
-        params.append(bigquery.ScalarQueryParameter("status", "STRING", status))
+        # `status` is derived, not a real column — translate to a scores NULL check.
+        if status == "complete":
+            conditions.append("home_score IS NOT NULL AND away_score IS NOT NULL")
+        elif status == "scheduled":
+            conditions.append("(home_score IS NULL OR away_score IS NULL)")
 
     where = "WHERE " + " AND ".join(conditions)
 

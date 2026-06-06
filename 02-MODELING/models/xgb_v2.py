@@ -33,5 +33,7 @@ class OLXGBModelV2(OLXGBModel):
 
     name = "ol_xgb_v2"
 
-    def __init__(self, params=None):
-        super().__init__(params=params or XGB_PARAMS_V2)
+    def __init__(self, params=None, random_seed: int = 42):
+        p = dict(params or XGB_PARAMS_V2)
+        p["random_state"] = random_seed
+        super().__init__(params=p, random_seed=random_seed)

@@ -9,7 +9,6 @@ All uploads are stored at:
 """
 import logging
 
-import google.api_core.exceptions
 from google.cloud import storage
 
 from app.config import settings
@@ -31,29 +30,14 @@ def get_storage_client() -> storage.Client:
 
 def _get_or_create_bucket(client: storage.Client) -> storage.Bucket:
     """
-    Return the upload bucket, creating it (with uniform access) if it doesn't exist.
-    Logs a warning if creation fails due to insufficient permissions — DEVOPS should
-    pre-create the bucket in that case.
+    Return a handle to the upload bucket.
+
+    Uses client.bucket() (no API call) rather than client.get_bucket() so that
+    the service account only needs storage.objectAdmin — not storage.buckets.get.
+    The bucket is pre-created by DEVOPS; if it is genuinely absent the first
+    upload_from_string call will raise a 404, which propagates to the caller.
     """
-    try:
-        return client.get_bucket(BUCKET_NAME)
-    except google.api_core.exceptions.NotFound:
-        logger.info("Bucket %s not found — creating it", BUCKET_NAME)
-        try:
-            bucket = client.create_bucket(
-                BUCKET_NAME,
-                location="US",
-            )
-            bucket.iam_configuration.uniform_bucket_level_access_enabled = True
-            bucket.patch()
-            logger.info("Created bucket %s with uniform access", BUCKET_NAME)
-            return bucket
-        except Exception as exc:
-            logger.error(
-                "Could not create bucket %s: %s. DEVOPS should pre-create it.",
-                BUCKET_NAME, exc,
-            )
-            raise
+    return client.bucket(BUCKET_NAME)
 
 
 def upload_file(

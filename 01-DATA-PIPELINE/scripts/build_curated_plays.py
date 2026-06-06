@@ -150,7 +150,16 @@ def build_season(client: bigquery.Client, season: int) -> dict:
             df[col] = False
             logger.warning(f"  Column '{col}' not in PBP — defaulting to False")
 
-    # Ensure required non-null columns have no nulls
+    # Drop non-play rows: timeouts, end-of-quarter markers, and other administrative
+    # rows have null posteam/defteam and must be excluded before loading to BQ
+    # since those columns are REQUIRED in the schema.
+    before = len(df)
+    df = df[df["posteam"].notna() & df["defteam"].notna()].copy()
+    dropped = before - len(df)
+    if dropped:
+        logger.info(f"  Dropped {dropped} non-play rows (null posteam/defteam)")
+
+    # Ensure required non-null columns have no nulls (post-filter sanity check)
     for col in ["play_id", "game_id", "season", "week", "posteam", "defteam", "play_type"]:
         null_count = df[col].isna().sum()
         if null_count > 0:

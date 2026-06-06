@@ -47,12 +47,19 @@ PROJECT = "nfl-model-471509"
 # ──────────────────────────────────────────────────────────────────────────────
 
 def drop_table_if_exists(client, table_ref: str):
-    """Drop a BQ table so it can be recreated with a clean schema."""
+    """Drop a BQ table so it can be recreated with a clean schema.
+
+    Sleeps 10 s after deletion to allow BigQuery's metadata layer to
+    propagate the schema change.  Without this pause, rapid retries can
+    encounter the stale FLOAT schema from the previous task attempt and
+    fail immediately with a type-change error on the very first partition.
+    """
     from google.cloud.exceptions import NotFound
     full = f"{PROJECT}.{table_ref}"
     try:
         client.delete_table(full)
         logger.info(f"Dropped existing table: {full}")
+        time.sleep(10)          # let BQ propagate the schema deletion
     except NotFound:
         logger.info(f"Table {full} does not exist — nothing to drop")
 

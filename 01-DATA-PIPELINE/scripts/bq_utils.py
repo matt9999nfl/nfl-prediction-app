@@ -1,8 +1,11 @@
 """
 BigQuery helpers shared across all ingest scripts.
 """
+import io
 import logging
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
@@ -13,7 +16,9 @@ PROJECT = "nfl-model-471509"
 # In nflfastR data these start as int64 (simple numeric IDs in 2015) but
 # become UUID strings in later seasons.  We always store them as STRING so
 # BQ schema never conflicts across partitions.
-_ID_COL_SUFFIXES = ("_player_id", "_player_name", "nfl_detail_id")
+# jersey_number is nominally numeric but typed as object/string in some seasons
+# (non-numeric values or mixed), so we always normalise it to STRING.
+_ID_COL_SUFFIXES = ("_player_id", "_player_name", "nfl_detail_id", "jersey_number")
 
 _NULL_STRINGS = {"nan", "None", "NaT", "<NA>", "none", "NaN"}
 
@@ -114,6 +119,71 @@ def load_partition(
     job = client.load_table_from_dataframe(df, full_table, job_config=job_config)
     job.result()
     logger.info(f"Loaded {len(df)} rows → {full_table}")
+
+
+def load_df_to_bq(
+    client: bigquery.Client,
+    df: pd.DataFrame,
+    full_table: str,
+    job_config: bigquery.LoadJobConfig,
+):
+    """
+    Load a DataFrame into BigQuery via pyarrow, converting any all-null columns
+    (pa.null() type) to pa.string() first.
+
+    This is the definitive fix for the INTEGER→STRING schema conflict:
+    - In early seasons (e.g. 2015) some player-ID columns are entirely NULL.
+    - pandas converts these to float64 NaN; after normalize_dtypes they become
+      object dtype with all None values.
+    - pyarrow converts all-None object columns to pa.null() (the 'null' type).
+    - BigQuery's autodetect sees pa.null() and infers INTEGER (or an unknown
+      type that later conflicts with STRING in later seasons).
+    - By casting pa.null() → pa.string() before loading, BQ always gets STRING.
+    """
+    arrow_table = pa.Table.from_pandas(df, preserve_index=False)
+
+    new_fields = []
+    new_columns = []
+    for i, field in enumerate(arrow_table.schema):
+        col = arrow_table.column(i)
+        if pa.types.is_null(field.type):
+            # All-null columns → STRING so BQ doesn't lock them as INTEGER.
+            new_fields.append(field.with_type(pa.string()))
+            new_columns.append(col.cast(pa.string()))
+        elif pa.types.is_integer(field.type) and field.name != "season":
+            # Integer columns (other than the partition key) → FLOAT64 so the
+            # schema stays consistent across seasons. Some columns appear as
+            # int64 in early seasons (all-whole-number values, no NaN) and
+            # float64 in later seasons (fractional values or NaN present).
+            # BQ rejects INTEGER→FLOAT changes once the table schema is locked.
+            # The raw landing layer doesn't need strict integer semantics.
+            new_fields.append(field.with_type(pa.float64()))
+            new_columns.append(col.cast(pa.float64()))
+        else:
+            new_fields.append(field)
+            new_columns.append(col)
+
+    fixed_schema = pa.schema(new_fields)
+    fixed_table = pa.table(
+        {f.name: new_columns[i] for i, f in enumerate(new_fields)},
+        schema=fixed_schema,
+    )
+
+    # Serialize to Parquet in memory — this preserves the Arrow schema so BQ
+    # sees pa.string() for null columns instead of guessing INTEGER.
+    # (BQ Client 3.x has no load_table_from_arrow; load_table_from_file works.)
+    buf = io.BytesIO()
+    pq.write_table(fixed_table, buf)
+    buf.seek(0)
+
+    # Parquet loads derive schema from the file — autodetect and schema hints
+    # are not applicable and can cause errors. Override them here.
+    job_config.source_format = bigquery.SourceFormat.PARQUET
+    job_config.autodetect = False
+    job_config.schema = None
+    job = client.load_table_from_file(buf, full_table, job_config=job_config)
+    job.result()
+    return job
 
 
 def ensure_table_with_schema(

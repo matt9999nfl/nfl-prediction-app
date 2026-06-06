@@ -1,6 +1,7 @@
 """
 Feature schema.  Matches API_CONTRACTS.md → Available Features response.
 """
+from typing import Optional
 from pydantic import BaseModel
 
 
@@ -12,7 +13,14 @@ class Feature(BaseModel):
     data_type: str          # "numeric" | "categorical" | "boolean"
     join_key_type: str      # "game_id" | "player_season_week" | "team_season_week"
     license_tag: str        # "open" | "licensed_commercial" | "personal_use_only"
+    deprecated: bool = False
 
 
 class FeatureListResponse(BaseModel):
     data: list[Feature]
+
+
+class DeprecatedFeatureInfo(BaseModel):
+    """Minimal info about a deprecated feature referenced by an experiment."""
+    name: str
+    deprecated_reason: Optional[str] = None

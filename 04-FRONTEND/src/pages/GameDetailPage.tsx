@@ -67,9 +67,15 @@ export function GameDetailPage() {
 
       {/* Matchup header */}
       <div className="space-y-2">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <h1 className="text-2xl font-bold tracking-tight">
-            {game.away_team} @ {game.home_team}
+            <Link to={`/teams/${game.away_team}`} className="hover:underline">
+              {game.away_team}
+            </Link>
+            {' @ '}
+            <Link to={`/teams/${game.home_team}`} className="hover:underline">
+              {game.home_team}
+            </Link>
           </h1>
           <StatusBadge status={game.status} />
           {game.div_game && <Badge variant="outline">Divisional</Badge>}
@@ -86,7 +92,14 @@ export function GameDetailPage() {
             <div className="grid grid-cols-3 text-center gap-4">
               <div>
                 <div className="text-4xl font-bold tabular-nums">{game.away_score ?? '—'}</div>
-                <div className="text-sm text-muted-foreground mt-1">{game.away_team}</div>
+                <div className="text-sm mt-1">
+                  <Link
+                    to={`/teams/${game.away_team}`}
+                    className="font-medium hover:underline text-primary"
+                  >
+                    {game.away_team}
+                  </Link>
+                </div>
                 <div className="text-xs text-muted-foreground">{teamName(game.away_team)}</div>
               </div>
               <div className="flex items-center justify-center text-muted-foreground font-medium">
@@ -94,7 +107,14 @@ export function GameDetailPage() {
               </div>
               <div>
                 <div className="text-4xl font-bold tabular-nums">{game.home_score ?? '—'}</div>
-                <div className="text-sm text-muted-foreground mt-1">{game.home_team}</div>
+                <div className="text-sm mt-1">
+                  <Link
+                    to={`/teams/${game.home_team}`}
+                    className="font-medium hover:underline text-primary"
+                  >
+                    {game.home_team}
+                  </Link>
+                </div>
                 <div className="text-xs text-muted-foreground">{teamName(game.home_team)}</div>
               </div>
             </div>

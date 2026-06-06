@@ -126,3 +126,39 @@ def make_prediction_row(**kwargs):
     }
     defaults.update(kwargs)
     return defaults
+
+
+def make_fold_result_row(**kwargs):
+    """Return a dict matching the FoldResult schema with sensible defaults."""
+    defaults = {
+        "season": 2024,
+        "wins": 167,
+        "losses": 105,
+        "pushes": 4,
+        "hit_rate": 0.614,
+        "n_games": 272,
+    }
+    defaults.update(kwargs)
+    return defaults
+
+
+def make_feature_importance_row(**kwargs):
+    """Return a dict matching FeatureImportanceItem schema with sensible defaults."""
+    defaults = {
+        "feature": "home_ol_rush_epa_per_att",
+        "importance": 0.0842,
+    }
+    defaults.update(kwargs)
+    return defaults
+
+
+def make_ol_rating_row(**kwargs):
+    """Return a dict matching OLRatingPoint schema with sensible defaults."""
+    defaults = {
+        "season": 2024,
+        "week": 1,
+        "ol_rush_epa_per_att": 0.12,
+        "ol_pass_epa_per_att": 0.08,
+    }
+    defaults.update(kwargs)
+    return defaults

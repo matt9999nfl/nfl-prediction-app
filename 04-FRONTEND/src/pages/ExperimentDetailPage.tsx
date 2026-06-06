@@ -5,25 +5,22 @@
  *  draft    → shows config, "Run" button enabled
  *  running  → polling every 10s, spinner + fold progress, note about Phase 3
  *  complete → full results: ATS hit rate, gate_passed, per-fold breakdown,
- *             "Save as Framework" button
+ *             feature importance panel, "Save as Framework" button
  *  failed   → error message, "Run again" button
  *
- * Per the build spec: the Cloud Run Job isn't wired until Phase 3, so the
- * experiment will stay 'running' indefinitely. The UI handles this gracefully
- * with a note that experiments typically complete in 5–15 minutes and keeps
- * polling without timing out.
- *
- * The EvaluationBanner in Layout is hidden for this page when gate_passed = true.
+ * Per-fold chart (3.3): consumes `per_fold` array from GET /api/v1/experiments/:id.
+ * Feature importance (3.4): fetches GET /api/v1/experiments/:id/feature-importance.
+ * Both endpoints may not be deployed yet — mock data is used with clear TODO comments.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   useExperiment,
   useExperimentStatus,
   useRunExperiment,
-  useExperimentPredictions,
+  useFeatureImportance,
   useCreateFramework,
 } from '@/api/queries'
 import { LoadingState } from '@/components/LoadingState'
@@ -42,11 +39,13 @@ import {
   metricLabel,
 } from '@/lib/formatters'
 import {
+  AlertTriangle,
   ArrowLeft,
   BookmarkPlus,
   Loader2,
   Play,
   RefreshCw,
+  X,
 } from 'lucide-react'
 import {
   BarChart,
@@ -57,13 +56,17 @@ import {
   Tooltip,
   ReferenceLine,
   ResponsiveContainer,
+  Cell,
 } from 'recharts'
-import type { Prediction } from '@/api/types'
+import type { FoldResult } from '@/api/types'
 
 // We poll every 10 seconds while running — per spec
 const POLL_INTERVAL_MS = 10_000
-// Fetch predictions for the last season in the experiment range
-const RESULTS_SEASON = 2024
+
+// ── Reference lines ───────────────────────────────────────────────────────────
+
+const BREAK_EVEN_RATE = 0.5238  // 52.38% at -110 odds
+const GATE_RATE = 0.54          // 54% gate threshold
 
 export function ExperimentDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -72,6 +75,9 @@ export function ExperimentDetailPage() {
   const [isRunning, setIsRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
   const [saveFrameworkError, setSaveFrameworkError] = useState<string | null>(null)
+  // BUG-002 (F2-A): session-dismissable deprecated features banner
+  const [deprecatedBannerDismissed, setDeprecatedBannerDismissed] = useState(false)
+  const dismissDeprecatedBanner = useCallback(() => setDeprecatedBannerDismissed(true), [])
 
   const {
     data: detail,
@@ -104,19 +110,13 @@ export function ExperimentDetailPage() {
     }
   }, [statusData?.status, id, qc])
 
-  // Load predictions for the complete state
+  const isComplete = config?.status === 'complete'
+
+  // Feature importance — fetch when experiment is complete
   const {
-    data: predictionsData,
-  } = useExperimentPredictions(
-    id ?? '',
-    RESULTS_SEASON,
-    { enabled: config?.status === 'complete' },
-  )
-
-  const predictions = predictionsData?.data ?? []
-
-  // Group predictions by fold for per-fold breakdown
-  const foldStats = groupByFold(predictions)
+    data: featureImportanceData,
+    isLoading: fiLoading,
+  } = useFeatureImportance(id ?? '', { enabled: isComplete && Boolean(id) })
 
   async function handleRun() {
     if (!id) return
@@ -161,10 +161,16 @@ export function ExperimentDetailPage() {
 
   if (!config) return null
 
-  const isComplete = config.status === 'complete'
   const isFailed = config.status === 'failed'
   const isDraft = config.status === 'draft'
   const running = config.status === 'running' || isRunning
+
+  // Per-fold data: prefer the new `per_fold` field from the API.
+  // TODO: wire to live endpoint once deployed (BACKEND-API 3.1)
+  const perFoldData: FoldResult[] = detail?.per_fold ?? []
+
+  // Feature importance: top 15 (API returns sorted descending — preserve order)
+  const topFeatures = (featureImportanceData?.features ?? []).slice(0, 15)
 
   return (
     <div className="space-y-6">
@@ -253,6 +259,29 @@ export function ExperimentDetailPage() {
         </Alert>
       )}
 
+      {/* BUG-002 (F2-A): amber warning banner for deprecated features — session-dismissable */}
+      {!deprecatedBannerDismissed && (detail?.deprecated_features?.length ?? 0) > 0 && (
+        <Alert variant="warning" className="flex items-start gap-3">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <AlertTitle>Deprecated features</AlertTitle>
+            <AlertDescription>
+              {detail!.deprecated_features!.length} feature{detail!.deprecated_features!.length === 1 ? '' : 's'} in this experiment {detail!.deprecated_features!.length === 1 ? 'is' : 'are'} no longer available:{' '}
+              {detail!.deprecated_features!.map((d) => d.name).join(', ')}.
+              Results from this run remain valid, but these features cannot be selected in new experiments.
+            </AlertDescription>
+          </div>
+          <button
+            type="button"
+            onClick={dismissDeprecatedBanner}
+            className="shrink-0 rounded-md p-0.5 hover:bg-yellow-200 transition-colors"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </Alert>
+      )}
+
       {/* Running state */}
       {running && (
         <Alert variant="info">
@@ -312,82 +341,18 @@ export function ExperimentDetailPage() {
             />
           </div>
 
-          {/* Per-fold breakdown */}
-          {foldStats.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Per-fold ATS hit rate</CardTitle>
-                <CardDescription>
-                  Walk-forward test folds — each bar = one test season
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={foldStats} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis
-                      dataKey="fold"
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(v: unknown) => `F${String(v)}`}
-                    />
-                    <YAxis
-                      domain={[0, 1]}
-                      tickFormatter={(v: number) => `${Math.round(v * 100)}%`}
-                      tick={{ fontSize: 12 }}
-                      width={40}
-                    />
-                    <Tooltip
-                      formatter={(v: number) => [`${(v * 100).toFixed(1)}%`, 'Hit rate']}
-                      labelFormatter={(l: unknown) => `Fold ${String(l)}`}
-                    />
-                    <ReferenceLine
-                      y={config.evaluation.success_threshold}
-                      stroke="hsl(var(--destructive))"
-                      strokeDasharray="4 2"
-                      label={{
-                        value: 'Threshold',
-                        position: 'insideTopRight',
-                        fontSize: 11,
-                        fill: 'hsl(var(--muted-foreground))',
-                      }}
-                    />
-                    <Bar
-                      dataKey="hitRate"
-                      fill="hsl(var(--primary))"
-                      radius={[3, 3, 0, 0]}
-                      name="Hit rate"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
+          {/* ── 3.3: Per-fold hit rate chart ──────────────────────────────── */}
+          <PerFoldChart
+            data={perFoldData}
+            successThreshold={config.evaluation.success_threshold}
+          />
 
-                {/* Fold table */}
-                <div className="overflow-x-auto mt-4">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-xs text-muted-foreground">
-                        <th className="text-left py-2 pr-4">Fold</th>
-                        <th className="text-right py-2 px-4">Games</th>
-                        <th className="text-right py-2 px-4">Correct</th>
-                        <th className="text-right py-2 pl-4">Hit rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {foldStats.map((row) => (
-                        <tr key={row.fold}>
-                          <td className="py-2 pr-4">Fold {row.fold}</td>
-                          <td className="py-2 px-4 text-right tabular-nums">{row.total}</td>
-                          <td className="py-2 px-4 text-right tabular-nums">{row.correct}</td>
-                          <td className="py-2 pl-4 text-right tabular-nums font-medium">
-                            {formatPct(row.hitRate)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          {/* ── 3.4: Feature importance panel ────────────────────────────── */}
+          <FeatureImportancePanel
+            features={topFeatures}
+            isLoading={fiLoading}
+            runId={featureImportanceData?.run_id ?? null}
+          />
         </div>
       )}
 
@@ -495,7 +460,12 @@ export function ExperimentDetailPage() {
         <div className="flex justify-end">
           <Link
             to="/experiments/new"
-            state={{ prefill: config }}
+            state={{
+              prefill: config,
+              // BUG-002 (F2-C): pass deprecated features so the wizard can exclude them
+              // from the pre-populated selection and show the user a named alert
+              cloneDeprecatedFeatures: detail?.deprecated_features ?? [],
+            }}
           >
             <Button variant="outline" size="sm">
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -508,26 +478,262 @@ export function ExperimentDetailPage() {
   )
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── 3.3: Per-fold hit rate chart ──────────────────────────────────────────────
 
-function groupByFold(predictions: Prediction[]) {
-  const map = new Map<number, { total: number; correct: number }>()
-  for (const p of predictions) {
-    const foldId = p.fold ?? 0
-    const entry = map.get(foldId) ?? { total: 0, correct: 0 }
-    entry.total += 1
-    if (p.correct === 1) entry.correct += 1
-    map.set(foldId, entry)
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([fold, { total, correct }]) => ({
-      fold,
-      total,
-      correct,
-      hitRate: total > 0 ? correct / total : 0,
-    }))
+interface FoldTooltipPayload {
+  wins: number
+  losses: number
+  pushes: number
+  n_games: number
+  hit_rate: number
 }
+
+function FoldTooltipContent({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: Array<{ payload: FoldTooltipPayload }>
+  label?: string | number
+}) {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload
+  return (
+    <div className="rounded border bg-background px-3 py-2 text-xs shadow-md">
+      <p className="font-semibold mb-1">Season {String(label)}</p>
+      <p>Hit rate: <span className="font-medium">{(d.hit_rate * 100).toFixed(1)}%</span></p>
+      <p>Record: {d.wins}–{d.losses}{d.pushes > 0 ? `–${d.pushes}` : ''}</p>
+      <p>Games: {d.n_games}</p>
+    </div>
+  )
+}
+
+function PerFoldChart({
+  data,
+  successThreshold,
+}: {
+  data: FoldResult[]
+  successThreshold: number
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Per-season ATS hit rate</CardTitle>
+        <CardDescription>
+          Walk-forward test folds — each bar = one test season. Reference lines: break-even (52.4%) and gate threshold (54%).
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {data.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No fold data yet — run this experiment to see per-season results.
+          </p>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={data} margin={{ top: 12, right: 20, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis
+                  dataKey="season"
+                  tick={{ fontSize: 12 }}
+                />
+                <YAxis
+                  domain={[0.4, 0.65]}
+                  tickFormatter={(v: number) => `${Math.round(v * 100)}%`}
+                  tick={{ fontSize: 12 }}
+                  width={44}
+                />
+                <Tooltip content={<FoldTooltipContent />} />
+                {/* Break-even line */}
+                <ReferenceLine
+                  y={BREAK_EVEN_RATE}
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeDasharray="4 2"
+                  label={{
+                    value: 'Break-even 52.4%',
+                    position: 'insideTopLeft',
+                    fontSize: 10,
+                    fill: 'hsl(var(--muted-foreground))',
+                  }}
+                />
+                {/* Gate threshold line */}
+                <ReferenceLine
+                  y={GATE_RATE}
+                  stroke="hsl(var(--destructive))"
+                  strokeDasharray="4 2"
+                  label={{
+                    value: `Gate ${(GATE_RATE * 100).toFixed(0)}%`,
+                    position: 'insideTopRight',
+                    fontSize: 10,
+                    fill: 'hsl(var(--destructive))',
+                  }}
+                />
+                {/* Success threshold line (may differ from gate) */}
+                {successThreshold !== GATE_RATE && (
+                  <ReferenceLine
+                    y={successThreshold}
+                    stroke="hsl(var(--primary))"
+                    strokeDasharray="4 2"
+                    label={{
+                      value: `Threshold ${formatPct(successThreshold)}`,
+                      position: 'insideBottomRight',
+                      fontSize: 10,
+                      fill: 'hsl(var(--primary))',
+                    }}
+                  />
+                )}
+                <Bar
+                  dataKey="hit_rate"
+                  name="Hit rate"
+                  radius={[3, 3, 0, 0]}
+                >
+                  {data.map((entry) => (
+                    <Cell
+                      key={`cell-${entry.season}`}
+                      fill={
+                        entry.hit_rate >= GATE_RATE
+                          ? 'hsl(var(--primary))'
+                          : entry.hit_rate >= BREAK_EVEN_RATE
+                            ? 'hsl(var(--muted-foreground))'
+                            : 'hsl(var(--destructive))'
+                      }
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+
+            {/* Fold table */}
+            <div className="overflow-x-auto mt-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-xs text-muted-foreground">
+                    <th className="text-left py-2 pr-4">Season</th>
+                    <th className="text-right py-2 px-4">W–L–P</th>
+                    <th className="text-right py-2 px-4">Games</th>
+                    <th className="text-right py-2 pl-4">Hit rate</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {data.map((row) => (
+                    <tr key={row.season}>
+                      <td className="py-2 pr-4">{row.season}</td>
+                      <td className="py-2 px-4 text-right tabular-nums">
+                        {row.wins}–{row.losses}{row.pushes > 0 ? `–${row.pushes}` : ''}
+                      </td>
+                      <td className="py-2 px-4 text-right tabular-nums">{row.n_games}</td>
+                      <td className="py-2 pl-4 text-right tabular-nums font-medium">
+                        {formatPct(row.hit_rate)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── 3.4: Feature importance panel ────────────────────────────────────────────
+
+/** Strip home_/away_ prefix and replace underscores with spaces. */
+function cleanFeatureLabel(raw: string): string {
+  return raw
+    .replace(/^(home_|away_)/, '')
+    .replace(/_/g, ' ')
+}
+
+interface FeatureImportanceItem {
+  feature: string
+  importance: number
+}
+
+function FeatureTooltipContent({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: Array<{ payload: FeatureImportanceItem }>
+}) {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload
+  return (
+    <div className="rounded border bg-background px-3 py-2 text-xs shadow-md max-w-[240px]">
+      <p className="font-mono break-all">{d.feature}</p>
+      <p className="mt-1">Importance: <span className="font-medium">{d.importance.toFixed(4)}</span></p>
+    </div>
+  )
+}
+
+function FeatureImportancePanel({
+  features,
+  isLoading,
+  runId,
+}: {
+  features: FeatureImportanceItem[]
+  isLoading: boolean
+  runId: string | null
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Feature importance</CardTitle>
+        <CardDescription>
+          Top 15 features by XGBoost importance score
+          {runId ? ` — run ${runId}` : ''}.
+          Hover a bar to see the full feature name.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading feature importance…
+          </div>
+        ) : features.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            Feature importance will appear after the experiment runs.
+          </p>
+        ) : (
+          <ResponsiveContainer width="100%" height={Math.max(240, features.length * 26)}>
+            <BarChart
+              data={features}
+              layout="vertical"
+              margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} className="stroke-border" />
+              <XAxis
+                type="number"
+                tick={{ fontSize: 11 }}
+                tickFormatter={(v: number) => v.toFixed(3)}
+              />
+              <YAxis
+                type="category"
+                dataKey="feature"
+                tickFormatter={cleanFeatureLabel}
+                width={160}
+                tick={{ fontSize: 11 }}
+              />
+              <Tooltip content={<FeatureTooltipContent />} />
+              <Bar
+                dataKey="importance"
+                fill="hsl(var(--primary))"
+                radius={[0, 3, 3, 0]}
+                name="Importance"
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function ResultCard({
   label,

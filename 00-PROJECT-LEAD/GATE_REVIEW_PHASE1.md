@@ -86,3 +86,24 @@ Flag=1 dropped from 51.6% (v1) to 43.8% (v2). At 64 games this is statistically 
 
 ### Decision pending
 *(See conversation with project owner — next experiment direction required.)*
+
+---
+
+## ⚠️ INC-001 Notice — Config-Runner Results Invalidated
+
+**Filed:** 2026-05-17  
+**Full record:** `INC-001-label-inversion.md`
+
+All experiment runs produced by the **config-driven runner** (`run_experiment.py`) prior to **2026-05-17 13:31 UTC** are invalidated. A label inversion in `curated.games.home_covered` caused the config runner to train and evaluate on inverted labels — models were rewarded for predicting the wrong team covered.
+
+**Impact on Phase 1 records:**
+
+| Run | Runner | Status |
+|-----|--------|--------|
+| ol_xgb_v1 `20260503_110052_f6015f` (48.68%) | Standalone (`run_phase1_backtest.py`) | ✅ Valid — computed `home_covered` inline, not from BQ |
+| ol_xgb_v2 `20260503_191541_a8c126` (49.65%) | Standalone (`run_phase1_backtest.py`) | ✅ Valid — same |
+| test1, test2, test3 (58–61%) | Config runner | ❌ Invalid — label-inversion artifacts |
+
+The Phase 1 gate results (48.68% and 49.65%) are unaffected and remain the valid baseline. They were produced before the config runner was deployed. The config runner was introduced in Phase 3 (deployed 2026-05-06); the data was rebuilt with the wrong formula when the Cloud Scheduler pipeline ran after deployment.
+
+The 10 affected rows in `experiments.backtest_runs` have been annotated with `[INC-001: labels inverted pre-2026-05-17 rebuild]` via BQ DML. INC-001 is ✅ CLOSED as of 2026-05-17.

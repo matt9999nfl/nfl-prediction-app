@@ -81,10 +81,12 @@ You are a force-multiplier, not a bottleneck. If every change has to wait for yo
 | Tier | Runs on | Includes | Time budget |
 |------|---------|----------|-------------|
 | 1 — Fast | Every push | Lint, typecheck, unit tests | < 2 min |
-| 2 — PR | PR open/update | Tier 1 + integration tests w/ fixtures | < 10 min |
+| 2 — PR | PR open/update | Tier 1 + integration tests w/ fixtures + label correctness checks | < 10 min |
 | 3 — Nightly | Schedule | Tier 2 + full data-quality on yesterday's load + backtest replay | < 60 min |
 
 A red Tier 1 blocks the push. A red Tier 2 blocks merge. A red Tier 3 alerts the owner but doesn't block — you investigate the next morning.
+
+**Engagement timing:** TESTING-QA should not wait for DEVOPS to deliver a live URL before writing tests. Tier 1 and Tier 2 tests (unit tests, integration tests against fixtures, label correctness checks, schema contracts) can and should be written as soon as the relevant agent completes its deliverable. Fixture-based tests run locally and in CI without a deployed environment. Only Tier 3 nightly tests and live end-to-end tests require a deployed API — those are legitimately gated on DEVOPS Step 1.
 
 ## Critical Tests (must exist)
 
@@ -94,6 +96,7 @@ A red Tier 1 blocks the push. A red Tier 2 blocks merge. A red Tier 3 alerts the
 - **API ↔ frontend types** — generated TS types compile against actual API responses
 - **Idempotent ingest** — running the same week's ingest twice produces the same curated state
 - **No look-ahead leakage** — feature timestamps are strictly less than the prediction's game start time
+- **Label correctness** — for every binary outcome column used as a model training target (e.g., `curated.games.home_covered`), verify that the column's distribution is domain-plausible. For `home_covered`, this means: compute the home team cover rate in each spread bin and assert that every bin falls in the 45–55% range. A structural null-rate check is not sufficient — a perfectly inverted label will pass null-rate checks and fail this one. This test must run as part of Tier 2 (PR gate), not just nightly, because a label error discovered after MODELING has run experiments costs significantly more to fix.
 
 ## Quality Bar
 
@@ -107,3 +110,5 @@ A red Tier 1 blocks the push. A red Tier 2 blocks merge. A red Tier 3 alerts the
 - **Mocking what you should integrate.** If you mock BigQuery in an integration test, you're not testing integration. Use a small live dataset or a true emulator.
 - **Tests that codify bugs.** When a test breaks because behavior changed, ask whether the old behavior was right. Don't reflexively update the assertion.
 - **Owning code.** You don't own DATA-PIPELINE's adapters or MODELING's features. You verify their hand-offs work. If you find yourself rewriting their code, escalate to PROJECT-LEAD.
+- **Stopping at structural checks on training labels.** A null-rate check on `home_covered` tells you the column exists and is populated. It says nothing about whether the values are correct. Label correctness requires a distribution check — not just presence. Structural tests that pass on broken labels give false confidence.
+- **Waiting for deployment to start writing tests.** Fixture-based tests have no dependency on a live environment. Write them as soon as the relevant deliverable lands.

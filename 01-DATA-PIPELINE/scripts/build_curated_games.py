@@ -80,17 +80,20 @@ ALT_COL_MAP = {
 
 def derive_home_covered(home_score, away_score, home_spread_close):
     """
-    home_covered = True  if (home_score - away_score) > -home_spread_close
-                 = False if (home_score - away_score) < -home_spread_close
+    home_covered = True  if (home_score - away_score) > home_spread_close
+                 = False if (home_score - away_score) < home_spread_close
                  = None  if push (exactly equal) or any value is null
+
+    nflverse sign convention: positive spread_line = home favoured (e.g. home_spread_close = 7
+    means home is a 7-point favourite and must win by more than 7 to cover).
     """
     import pandas as pd
     import numpy as np
 
     margin = home_score - away_score
-    required_margin = -home_spread_close
+    required_margin = home_spread_close
 
-    covered = pd.Series([None] * len(margin), dtype=object)
+    covered = pd.Series([None] * len(margin), dtype=object, index=margin.index)
     both_valid = margin.notna() & required_margin.notna()
 
     covered[both_valid & (margin > required_margin)] = True

@@ -255,6 +255,39 @@ Use **Terraform** with the `hashicorp/google` provider. All infrastructure is de
 
 ---
 
+## ADR-011 — The platform is the product: no hypothesis testing in Claude
+**Status:** Accepted  
+**Date:** 2026-05-17
+
+### Context
+During Phase 4, a result from the app (58–61% ATS hit rate on rushing features) was brought to PROJECT-LEAD for investigation. The correct investigation — verifying whether the platform was producing correct results — was valid and necessary. However, after confirming the platform had a data bug (INC-001) and fixing it, the session continued into running new experiments directly in Claude (situational filtering: divisional games, late-season games) using standalone Python scripts outside the platform. This consumed significant effort and produced results with no lasting value — the experiments can't be viewed in the app, can't be shared, can't be reproduced by the user, and don't contribute to the platform. The project owner correctly identified this as a scope failure.
+
+### Decision
+**Experiments are run through the platform. Claude is used to build the platform, not to run experiments on it.**
+
+When the project owner brings an app result, there are exactly two questions:
+1. Is this a genuine edge?
+2. Is the app malfunctioning?
+
+Question 2 is always answered first. If the app is malfunctioning, the fix goes into the platform — the corrected code, the rebuilt data, the new validation gate. Question 1 is then answered by the project owner running the corrected experiment through the app themselves.
+
+Claude agents must not: run backtests via standalone Python scripts, engage MODELING to test hypotheses in chat, or produce experiment results that exist only in the conversation and not in the platform. The only exceptions are infrastructure validation runs (faithfulness checks, shuffle-label tests) that are specifically testing whether the runner itself is working — these are platform validation, not hypothesis testing.
+
+### Alternatives Considered
+- **Continue running experiments in Claude for speed** — rejected. Speed is illusory: the results can't be used, shared, or reproduced. Every experiment run in Claude is work that didn't contribute to the platform and will need to be re-run through the app anyway.
+- **Use Claude for experiments, build the display later** — rejected. This separates the investigation from the tool the user is building and reinforces a workflow where the platform is optional rather than central.
+
+### Consequences
+- When a user brings an implausible result, PROJECT-LEAD investigates the platform's correctness (data, labels, runner faithfulness) — not the hypothesis.
+- If investigation tooling doesn't exist in the platform to diagnose a result (e.g., no spread-bin diagnostic endpoint, no per-fold UI), the next build task is to add that tooling to the platform.
+- MODELING's instruction file is updated: all experiments go through the platform; standalone runners are for infrastructure validation only.
+- PROJECT-LEAD's SOP is updated: when reviewing a result, spec the platform feature that enables investigation before running any investigation in Claude.
+
+### Revisit If
+- A specific technical investigation requires data manipulation that the platform genuinely cannot support even after reasonable build effort — in that case, file an explicit exception with PROJECT-LEAD sign-off and document it as a one-time diagnostic, not a workflow.
+
+---
+
 ## ADR-006 — Experiment gates are per-experiment, not project-level gates
 **Status:** Accepted
 **Date:** 2026-05-03

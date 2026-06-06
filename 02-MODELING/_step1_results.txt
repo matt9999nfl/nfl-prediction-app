@@ -1,0 +1,36 @@
+============================================================
+STEP 1 — Spread-bin diagnostic (label verification)
+============================================================
+Bucket                  Cover %        N
+------------------------------------------
+home_dog_10+               50.8      266
+home_dog_3-10              47.5     1120
+home_fav_10+               54.4       79
+home_fav_3-10              50.7      689
+pick_em                    47.6      668
+
+LABELS CLEAN: All buckets within 45-55%. Proceeding.
+
+============================================================
+STEP 2 — All experiment configs (most recent 20)
+============================================================
+ID                                       Name                                               Status
+---------------------------------------------------------------------------------------------------------
+19a50bf1-e812-4745-b153-042c6db46a00     test3                                              complete
+decaa551-b991-43af-9a71-ab70b9580af7     test3-shuffle-labels-leakage-test                  complete
+6ec7deac-3c62-4954-a8d4-a7bfb21b410f     v2-23base-faithfulness-check                       complete
+2159ce78-e121-4543-964f-286d26ef46fe     v2-23base-faithful-2015-2024                       complete
+bcc250d0-7973-4080-affd-3a6888f33899     test                                               failed
+cf3e371f-6709-4ab2-9b80-7cafe60a2afc     test2                                              complete
+3619876f-4961-4ec6-a2be-4801cacabd17     test1                                              complete
+7b19752d-0fb8-4c7d-9e99-a062f4e3d2cb     debug2                                             draft
+
+test3 candidate: test3 (19a50bf1-e812-4745-b153-042c6db46a00)
+A3 config confirmed: test3-shuffle-labels-leakage-test
+A2 config confirmed: v2-23base-faithfulness-check
+
+A2_CONFIG_ID = 6ec7deac-3c62-4954-a8d4-a7bfb21b410f  (found=True)
+A3_CONFIG_ID = decaa551-b991-43af-9a71-ab70b9580af7  (found=True)
+TEST3_CONFIG_ID = 19a50bf1-e812-4745-b153-042c6db46a00
+
+LABELS_CLEAN = True

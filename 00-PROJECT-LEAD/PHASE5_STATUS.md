@@ -2,8 +2,8 @@
 
 **Owner:** PROJECT-LEAD  
 **Phase start:** 2026-05-23  
-**Updated:** 2026-05-23 (BACKEND-API agent: deployed commit fe9f0a3 to Cloud Run, all four smoke tests passed)  
-**Status:** ✅ Both tracks complete — all fixes deployed and smoke-tested
+**Updated:** 2026-05-24 (DEVOPS agent: P5-09 complete — write path unblocked, new bundle deployed, API key rotated and smoke-tested)  
+**Status:** ✅ All tracks complete — all fixes deployed and smoke-tested
 
 This file is updated by agents as they complete deliverables. PROJECT-LEAD reads it to track parallel work and decide when the sprint is complete. For full rationale and fix descriptions, see `ROADMAP.md §Phase 5`.
 
@@ -15,6 +15,7 @@ This file is updated by agents as they complete deliverables. PROJECT-LEAD reads
 |-------|------------|-------|--------|
 | BACKEND-API | BACKEND-API | P5-03, P5-05 (query), P5-06, P5-07 | ✅ Deployed and smoke-tested |
 | FRONTEND | FRONTEND | P5-01, P5-02, P5-04, P5-05 (display), P5-08 | ✅ Deployed and smoke-tested |
+| DEVOPS | DEVOPS | P5-09 (write-path auth fix) | ✅ Deployed and smoke-tested |
 
 ---
 
@@ -84,7 +85,21 @@ All backend and frontend Phase 5 items are deployed. Remaining verification:
 - [ ] Per-fold chart shows all folds across all seasons (not just most recent fold)
 - [ ] Feature importance panel renders on completed experiment results pages
 - [ ] Wizard Step 3 communicates home/away feature mirroring
-- [ ] All changes deployed and smoke-tested against live URLs
+- [x] All changes deployed and smoke-tested against live URLs
+
+---
+
+---
+
+## DEVOPS Track
+
+**Task:** P5-09 — Write-path auth fix (critical: UI read-only without this)
+
+| # | Item | Severity | Status | Notes |
+|---|------|----------|--------|-------|
+| P5-09 | Write path returns 401 — UI read-only | 🔴 Critical | ✅ Complete | Root cause: OWNER_API_KEY Secret Manager version 1 was corrupt/mismatched — backend rejected it despite the hex value appearing correct. Fix: (1) Added `VITE_API_KEY: ${{ secrets.OWNER_API_KEY }}` to Build frontend step in both `05-DEVOPS/ci/frontend-deploy.yml` and `.github/workflows/frontend-deploy.yml`. (2) Deprecated `04-FRONTEND/cloudbuild.yaml` with a comment block (no Cloud Build triggers exist in global or us-central1). (3) Rotated OWNER_API_KEY — added version 3 (`BEE922...477F7`) with clean 64-byte no-newline encoding, deployed to Cloud Run revision 00018-8p6. (4) Rebuilt frontend bundle (`index-C9X3C1J-.js`) with new key baked in, deployed via gsutil rsync, CDN cache invalidated. (5) Updated `.env.local` with new key + comment. Smoke test: `POST /api/v1/experiments` with new key → HTTP 422 (auth passed, validation error on incomplete body). Live app at `http://34.49.20.115` confirmed serving new bundle. |
+
+**Deployed:** 2026-05-24. Cloud Run revision nfl-backend-api-00018-8p6 serving 100% traffic. GitHub secret `OWNER_API_KEY` must be set to `BEE922262B06B7D6DEE9242FF0F37D5787B5F4C21CC45083FCA8A57B4AC477F7` for CI pipeline deploys to work — this cannot be done programmatically (manual step via GitHub repo Settings → Secrets → Actions).
 
 ---
 

@@ -61,6 +61,7 @@ jobs:
         working-directory: 04-FRONTEND
         env:
           VITE_API_BASE_URL: ${{ steps.api-url.outputs.url }}
+          VITE_API_KEY: ${{ secrets.OWNER_API_KEY }}
         run: npm run build
 
       - name: Upload to Cloud Storage

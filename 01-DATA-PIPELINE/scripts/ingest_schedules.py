@@ -20,6 +20,7 @@ from scripts.bq_utils import (
     ensure_datasets,
     ensure_table_with_schema,
     get_client,
+    load_df_to_bq,
     normalize_dtypes,
 )
 
@@ -72,8 +73,7 @@ def ingest_season(client: bigquery.Client, adapter: NflfastrAdapter, season: int
         schema=[bigquery.SchemaField("nfl_detail_id", "STRING")],
     )
     full_table = f"{PROJECT}.{TABLE}${season}"
-    job = client.load_table_from_dataframe(df, full_table, job_config=job_config)
-    job.result()
+    load_df_to_bq(client, df, full_table, job_config)
 
     elapsed = round(time.time() - t0, 1)
     logger.info(f"Schedules {season}: loaded {len(df)} rows in {elapsed}s")

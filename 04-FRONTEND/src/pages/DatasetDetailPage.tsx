@@ -186,8 +186,9 @@ export function DatasetDetailPage() {
           <StatusBadge status={dataset.status} />
         </div>
         <p className="text-muted-foreground text-sm">
-          {formatRelativeDate(dataset.upload_date)} ·{' '}
-          {dataset.row_count.toLocaleString()} rows · {dataset.column_count} columns
+          {formatRelativeDate(dataset.upload_date)}
+          {dataset.row_count != null && ` · ${dataset.row_count.toLocaleString()} rows`}
+          {dataset.column_count != null && ` · ${dataset.column_count} columns`}
         </p>
       </div>
 

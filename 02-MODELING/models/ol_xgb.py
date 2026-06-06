@@ -58,8 +58,10 @@ class OLXGBModel:
 
     name = "ol_xgb_v1"
 
-    def __init__(self, params: Optional[dict] = None):
-        self.params = params or XGB_PARAMS
+    def __init__(self, params: Optional[dict] = None, random_seed: int = 42):
+        p = dict(params or XGB_PARAMS)
+        p["random_state"] = random_seed
+        self.params = p
         self.scaler   = StandardScaler()
         self.imputer  = SimpleImputer(strategy="mean")
         self.model    = XGBClassifier(**self.params)

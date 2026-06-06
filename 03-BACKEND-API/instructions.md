@@ -193,7 +193,10 @@ BQ table name sanitization: `dataset_id.replace('-', '_')` (UUID hyphens → und
 1. DATA-PIPELINE or MODELING notifies you
 2. Update affected queries
 3. Bump response schema version if breaking for clients
-4. Notify FRONTEND
+4. Notify FRONTEND proactively — don't wait for FRONTEND to discover the change via a broken type generation
+
+**When another agent requests a direct change to your files:**
+If any agent other than BACKEND-API attempts to edit files under `03-BACKEND-API/` directly (or asks you to rubber-stamp a change they've already made), escalate to PROJECT-LEAD immediately. Log the request, the file(s) involved, and the outcome. The correct path for any agent that needs a schema or endpoint change is to raise it with PROJECT-LEAD, who directs BACKEND-API to implement it. Direct edits by other agents are a boundary violation, not an exception.
 
 ## Operating Principles
 
@@ -211,3 +214,36 @@ BQ table name sanitization: `dataset_id.replace('-', '_')` (UUID hyphens → und
 - Replace `trigger_experiment_runner_stub()` with real `JobsClient().run_job()` call
 - Add `/api/v1/teams/{team}/ol-rating` endpoint
 - DEVOPS: Cloud Run deployment, IAM tightening, Scheduler for background jobs
+
+---
+
+## 🔴 CURRENT TASK — Bug Fix Sprint (assigned by PROJECT-LEAD, 2026-05-26)
+
+Two bugs found during the v2-23base-faithful-2015-2024 rerun session. Fix both now. Full specs are in `../00-PROJECT-LEAD/BUG-001-CLONE-DROPS-FEATURES.md` and `../00-PROJECT-LEAD/BUG-002-DEPRECATED-FEATURES.md`. Read them before touching code.
+
+### BUG-001 — Experiment cloning drops all features [Critical]
+
+Your tasks (B1-A, B1-B, B1-C):
+
+**B1-A:** Check `app/schemas/experiments.py` — does `ExperimentCreateRequest` have a `features: List[str]` field? If not, add it. Then trace the handler in `app/routers/experiments.py` for `POST /api/v1/experiments` — confirm `features` is being written to the BigQuery INSERT. This is the most likely root cause: the field is missing from the Pydantic schema so FastAPI silently drops it before the handler sees it.
+
+**B1-B:** `PATCH` and `PUT` on `/api/v1/experiments/{id}` both return 405. Decide: is this intentional (experiments are immutable after creation) or an oversight? Default to Option A (immutable — no update path needed). Document your decision clearly in `../00-PROJECT-LEAD/BUG-STATUS.md` (create it if it doesn't exist). The FRONTEND agent is waiting on this to know whether a post-creation fix path exists.
+
+**B1-C:** If you changed the schema or handler, redeploy to Cloud Run and smoke test `POST /api/v1/experiments` with a non-empty `features` array against `https://nfl-backend-api-rmaehdhzhq-uc.a.run.app`. Confirm the created experiment's detail response shows the features.
+
+### BUG-002 — Deprecated features referenced in experiments with no warning [Medium]
+
+Your tasks (B2-A through B2-E):
+
+**B2-A:** Audit all saved experiments against the feature catalog. Find which experiments reference features no longer in the catalog. The two known culprits are `def_qb_hit_rate` and `def_rush_yards_allowed_per_att` in `v2-23base-faithful-2015-2024`. Document all findings in `../00-PROJECT-LEAD/BUG-STATUS.md`.
+
+**B2-B:** Add `deprecated BOOL DEFAULT FALSE`, `deprecated_at TIMESTAMP`, and `deprecated_reason STRING` columns to the feature catalog table (likely `platform.features` — check the actual table). Mark the two known deprecated features. Update `GET /api/v1/features` to exclude deprecated features from the default response (add `?include_deprecated=true` param for admin use).
+
+**B2-C:** Add `deprecated_features: List[DeprecatedFeatureInfo]` to the `GET /api/v1/experiments/{id}` response. Each entry: `{name: str, deprecated_reason: Optional[str]}`. Return `[]` if none — never omit the field.
+
+**B2-D:** Add `has_deprecated_features: bool` to each item in the `GET /api/v1/experiments` list response.
+
+**B2-E:** Redeploy and smoke test all four changes against the live API. Write completion notes to `../00-PROJECT-LEAD/BUG-STATUS.md`.
+
+### Deprecation policy (set by PROJECT-LEAD)
+Tombstone, do not delete. Deprecated features stay in the catalog with `deprecated = true` so historical experiments remain interpretable.

@@ -36,6 +36,8 @@ import type {
   ExperimentTarget,
   EvaluationMetric,
   Feature,
+  GameUniverseFilter,
+  DeprecatedFeatureInfo,
 } from '@/api/types'
 
 const STEPS = [
@@ -56,6 +58,12 @@ const TARGETS: ExperimentTarget[] = [
 
 const METRICS: EvaluationMetric[] = ['ats_hit_rate', 'accuracy', 'log_loss', 'rmse']
 
+interface CloneRouterState {
+  prefill?: Partial<CreateExperimentPayload>
+  /** BUG-002: deprecated features from the source experiment, passed by detail page */
+  cloneDeprecatedFeatures?: DeprecatedFeatureInfo[]
+}
+
 interface ExperimentsNewPageProps {
   /** Pre-fill the form from a saved framework */
   prefill?: Partial<CreateExperimentPayload>
@@ -65,9 +73,15 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
   const navigate = useNavigate()
   const location = useLocation()
   // Support pre-fill from either a prop (future use) or React Router state
-  // (passed via <Link state={{ prefill: config }}>)
-  const routerPrefill = (location.state as { prefill?: Partial<CreateExperimentPayload> } | null)?.prefill
+  // (passed via <Link state={{ prefill: config, cloneDeprecatedFeatures: [...] }}>)
+  const routerState = location.state as CloneRouterState | null
+  const routerPrefill = routerState?.prefill
   const prefill = prefillProp ?? routerPrefill
+
+  // BUG-002: deprecated features excluded from the pre-populated clone selection
+  const cloneDeprecatedFeatures: DeprecatedFeatureInfo[] = routerState?.cloneDeprecatedFeatures ?? []
+  const deprecatedFeatureNames = new Set(cloneDeprecatedFeatures.map((d) => d.name))
+
   const [step, setStep] = useState(0)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [featureSearch, setFeatureSearch] = useState('')
@@ -77,7 +91,14 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
   const [description, setDescription] = useState(prefill?.description ?? '')
   const [target, setTarget] = useState<ExperimentTarget>(prefill?.target ?? 'ats_cover')
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<Set<string>>(
-    new Set(prefill?.features?.map((f) => `${f.dataset}.${f.column}`) ?? []),
+    // BUG-001 (F1-A): initialise selected feature IDs from the prefill.
+    // BUG-002 (F2-C): exclude deprecated features from the pre-populated set so the
+    // build payload doesn't reference features that the catalog no longer contains.
+    new Set(
+      (prefill?.features ?? [])
+        .filter((f) => !deprecatedFeatureNames.has(f.semantic_name) && !deprecatedFeatureNames.has(f.column))
+        .map((f) => `${f.dataset}.${f.column}`)
+    ),
   )
   const [metric, setMetric] = useState<EvaluationMetric>(
     prefill?.evaluation?.metric ?? 'ats_hit_rate',
@@ -87,8 +108,16 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
   )
   const [minSample, setMinSample] = useState(prefill?.evaluation?.min_sample ?? 250)
   const [startSeason, setStartSeason] = useState(prefill?.methodology?.start_season ?? 2015)
-  const [endSeason, setEndSeason] = useState(prefill?.methodology?.end_season ?? 2024)
+  // P5-04: default end_season changed from 2024 to 2025
+  const [endSeason, setEndSeason] = useState(prefill?.methodology?.end_season ?? 2025)
   const [trainSeasons, setTrainSeasons] = useState(prefill?.methodology?.train_seasons ?? 4)
+
+  // Game universe state
+  type GameUniversePreset = 'all' | 'divisional' | 'late_season' | 'custom'
+  const [gameUniversePreset, setGameUniversePreset] = useState<GameUniversePreset>('all')
+  const [customField, setCustomField] = useState<'div_game' | 'week'>('week')
+  const [customOperator, setCustomOperator] = useState<'eq' | 'gte' | 'lte' | 'ne'>('gte')
+  const [customValue, setCustomValue] = useState<string>('15')
 
   const { data: featuresData, isLoading: featuresLoading, isError: featuresError } = useFeatures()
   const createExperiment = useCreateExperiment()
@@ -130,8 +159,22 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
     })
   }
 
+  function resolveGameUniverse(): GameUniverseFilter | null {
+    if (gameUniversePreset === 'all') return null
+    if (gameUniversePreset === 'divisional') return { field: 'div_game', operator: 'eq', value: true }
+    if (gameUniversePreset === 'late_season') return { field: 'week', operator: 'gte', value: 15 }
+    // custom
+    const v: boolean | number = customField === 'div_game'
+      ? customValue === 'true'
+      : parseInt(customValue, 10)
+    return { field: customField, operator: customOperator, value: v }
+  }
+
   function buildPayload(): CreateExperimentPayload {
-    const selectedFeatures = allFeatures
+    // BUG-001 (F1-A): build the features payload by matching selectedFeatureIds against
+    // the live catalog. Any selected IDs not found in the catalog are resolved against
+    // the prefill (clone source) so that features don't silently disappear.
+    const catalogMatches = allFeatures
       .filter((f) => selectedFeatureIds.has(f.feature_id))
       .map((f) => ({
         dataset: f.dataset,
@@ -141,6 +184,19 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
           : f.semantic_name,
         semantic_name: f.semantic_name,
       }))
+
+    // IDs that were found in the catalog
+    const resolvedIds = new Set(catalogMatches.map((f) => `${f.dataset}.${f.column}`))
+
+    // Fallback: for any selected IDs not matched against the catalog (e.g. features
+    // that exist in the saved experiment config but are missing from the catalog
+    // because the catalog uses a slightly different key format), resolve them from the
+    // prefill's features array so they still appear in the POST payload.
+    const prefillFallback = (prefill?.features ?? []).filter(
+      (f) => selectedFeatureIds.has(`${f.dataset}.${f.column}`) && !resolvedIds.has(`${f.dataset}.${f.column}`),
+    )
+
+    const selectedFeatures = [...catalogMatches, ...prefillFallback]
 
     return {
       name: name.trim(),
@@ -158,6 +214,7 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
         test_seasons: 1,
         start_season: startSeason,
         end_season: endSeason,
+        game_universe: resolveGameUniverse(),
       },
       model: {
         type: 'xgboost',
@@ -168,8 +225,16 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
 
   async function handleSave() {
     setSubmitError(null)
+    const payload = buildPayload()
+    // BUG-001 (F1-B): guard — never submit an experiment with no features
+    if (payload.features.length === 0) {
+      setSubmitError(
+        'At least one feature must be selected before saving. Go back to Step 3 (Features) to add features.',
+      )
+      return
+    }
     try {
-      const result = await createExperiment.mutateAsync(buildPayload())
+      const result = await createExperiment.mutateAsync(payload)
       navigate(`/experiments/${result.experiment_id}`)
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to create experiment.')
@@ -180,13 +245,23 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
   function canProceed(): boolean {
     if (step === 0) return name.trim().length > 0
     if (step === 2) return selectedFeatureIds.size > 0
-    if (step === 4)
-      return startSeason < endSeason && endSeason - startSeason >= trainSeasons
+    if (step === 4) {
+      if (!(startSeason < endSeason && endSeason - startSeason >= trainSeasons)) return false
+      if (gameUniversePreset === 'custom') {
+        if (customValue.trim() === '') return false
+        if (customField === 'week') {
+          const n = parseInt(customValue, 10)
+          if (isNaN(n) || n < 1 || n > 22) return false
+        }
+      }
+      return true
+    }
     return true
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    // P5-02: pb-20 reserves space for the fixed footer nav bar
+    <div className="max-w-2xl space-y-6 pb-20">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">New experiment</h1>
         <p className="text-muted-foreground text-sm mt-1">
@@ -289,8 +364,24 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
                   Select features to include. Curated features come from the platform's
                   nflfastR data. User datasets appear below.
                 </p>
-                <Badge variant="secondary">{selectedFeatureIds.size} selected</Badge>
+                {/* P5-08: show mirroring count */}
+                <Badge variant="secondary">
+                  {selectedFeatureIds.size > 0
+                    ? `${selectedFeatureIds.size} selected · ${selectedFeatureIds.size * 2} features used in model (home + away mirrors)`
+                    : '0 selected'}
+                </Badge>
               </div>
+
+              {/* BUG-002 (F2-C): static alert when deprecated features were excluded from clone */}
+              {cloneDeprecatedFeatures.length > 0 && (
+                <Alert variant="warning">
+                  <AlertDescription>
+                    <strong>{cloneDeprecatedFeatures.length} feature{cloneDeprecatedFeatures.length === 1 ? '' : 's'} from the original experiment {cloneDeprecatedFeatures.length === 1 ? 'is' : 'are'} no longer available and {cloneDeprecatedFeatures.length === 1 ? 'was' : 'were'} not pre-selected:</strong>{' '}
+                    {cloneDeprecatedFeatures.map((d) => d.name).join(', ')}.
+                    {' '}Please select substitutes.
+                  </AlertDescription>
+                </Alert>
+              )}
 
               <Input
                 placeholder="Search features…"
@@ -304,45 +395,51 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
               )}
 
               {!featuresLoading && !featuresError && (
-                <div className="max-h-80 overflow-y-auto space-y-4 border rounded-md p-3">
-                  {featuresByDataset.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      {featureSearch ? 'No features match your search.' : 'No features available.'}
-                    </p>
-                  )}
-                  {featuresByDataset.map(([dataset, features]) => (
-                    <div key={dataset}>
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                        {dataset}
+                <>
+                  <div className="max-h-80 overflow-y-auto space-y-4 border rounded-md p-3">
+                    {featuresByDataset.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        {featureSearch ? 'No features match your search.' : 'No features available.'}
                       </p>
-                      <div className="space-y-2">
-                        {features.map((f) => (
-                          <div
-                            key={f.feature_id}
-                            className="flex items-start gap-3 py-1"
-                          >
-                            <Checkbox
-                              id={`feat-${f.feature_id}`}
-                              checked={selectedFeatureIds.has(f.feature_id)}
-                              onCheckedChange={() => toggleFeature(f.feature_id)}
-                              className="mt-0.5"
-                            />
-                            <Label
-                              htmlFor={`feat-${f.feature_id}`}
-                              className="cursor-pointer space-y-0.5"
+                    )}
+                    {featuresByDataset.map(([dataset, features]) => (
+                      <div key={dataset}>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                          {dataset}
+                        </p>
+                        <div className="space-y-2">
+                          {features.map((f) => (
+                            <div
+                              key={f.feature_id}
+                              className="flex items-start gap-3 py-1"
                             >
-                              <span className="font-medium text-sm">{f.semantic_name}</span>
-                              <span className="block text-xs text-muted-foreground">
-                                {f.description}
-                              </span>
-                            </Label>
-                          </div>
-                        ))}
+                              <Checkbox
+                                id={`feat-${f.feature_id}`}
+                                checked={selectedFeatureIds.has(f.feature_id)}
+                                onCheckedChange={() => toggleFeature(f.feature_id)}
+                                className="mt-0.5"
+                              />
+                              <Label
+                                htmlFor={`feat-${f.feature_id}`}
+                                className="cursor-pointer space-y-0.5"
+                              >
+                                <span className="font-medium text-sm">{f.semantic_name}</span>
+                                <span className="block text-xs text-muted-foreground">
+                                  {f.description}
+                                </span>
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
+                        <Separator className="mt-3" />
                       </div>
-                      <Separator className="mt-3" />
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                  {/* P5-08: static explanatory note about home/away mirroring */}
+                  <p className="text-xs text-muted-foreground">
+                    Each selected feature is automatically mirrored to its away-team counterpart. Selecting 5 home features adds 5 matching away features — 10 total.
+                  </p>
+                </>
               )}
             </div>
           )}
@@ -464,6 +561,114 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
                   </AlertDescription>
                 </Alert>
               )}
+
+              <Separator />
+
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Game universe</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Scope this experiment to a subset of games. When absent, all
+                    regular-season games are used.
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  {(
+                    [
+                      {
+                        id: 'all',
+                        label: 'All regular-season games',
+                        description: 'No filter applied. All ~260 REG games per season.',
+                      },
+                      {
+                        id: 'divisional',
+                        label: 'Divisional games only',
+                        description: '~90 games/season. Home and away teams in the same division.',
+                      },
+                      {
+                        id: 'late_season',
+                        label: 'Late season (Weeks 15–18)',
+                        description: '~64 games/season. Playoff positioning games.',
+                      },
+                      {
+                        id: 'custom',
+                        label: 'Custom',
+                        description: 'Define a custom field, operator, and value filter.',
+                      },
+                    ] as { id: GameUniversePreset; label: string; description: string }[]
+                  ).map((opt) => (
+                    <label
+                      key={opt.id}
+                      className={`flex items-center gap-3 rounded-lg border p-4 cursor-pointer transition-colors ${
+                        gameUniversePreset === opt.id
+                          ? 'border-primary bg-accent'
+                          : 'hover:bg-accent/50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="game-universe"
+                        value={opt.id}
+                        checked={gameUniversePreset === opt.id}
+                        onChange={() => setGameUniversePreset(opt.id)}
+                        className="accent-primary"
+                      />
+                      <div>
+                        <div className="font-medium text-sm">{opt.label}</div>
+                        <div className="text-xs text-muted-foreground">{opt.description}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+
+                {gameUniversePreset === 'custom' && (
+                  <div className="grid gap-4 sm:grid-cols-3 pl-1 pt-1">
+                    <div className="space-y-2">
+                      <Label htmlFor="custom-field">Field</Label>
+                      <Select
+                        id="custom-field"
+                        value={customField}
+                        onChange={(e) => setCustomField(e.target.value as 'div_game' | 'week')}
+                      >
+                        <option value="week">week</option>
+                        <option value="div_game">div_game</option>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="custom-operator">Operator</Label>
+                      <Select
+                        id="custom-operator"
+                        value={customOperator}
+                        onChange={(e) =>
+                          setCustomOperator(e.target.value as 'eq' | 'gte' | 'lte' | 'ne')
+                        }
+                      >
+                        <option value="eq">eq (=)</option>
+                        <option value="gte">gte (&ge;)</option>
+                        <option value="lte">lte (&le;)</option>
+                        <option value="ne">ne (&ne;)</option>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="custom-value">
+                        Value
+                        {customField === 'week' && (
+                          <span className="text-xs text-muted-foreground ml-1">(1–22)</span>
+                        )}
+                        {customField === 'div_game' && (
+                          <span className="text-xs text-muted-foreground ml-1">(true/false)</span>
+                        )}
+                      </Label>
+                      <Input
+                        id="custom-value"
+                        value={customValue}
+                        onChange={(e) => setCustomValue(e.target.value)}
+                        placeholder={customField === 'div_game' ? 'true' : '15'}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -495,6 +700,18 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
                 value={`${trainSeasons} seasons`}
               />
               <ReviewRow label="Model" value="XGBoost" />
+              <ReviewRow
+                label="Game universe"
+                value={
+                  gameUniversePreset === 'all'
+                    ? 'All games'
+                    : gameUniversePreset === 'divisional'
+                    ? 'Divisional only'
+                    : gameUniversePreset === 'late_season'
+                    ? 'Late season (Wks 15–18)'
+                    : `${customField} ${customOperator} ${customValue}`
+                }
+              />
 
               {submitError && (
                 <Alert variant="destructive">
@@ -506,36 +723,40 @@ export function ExperimentsNewPage({ prefill: prefillProp }: ExperimentsNewPageP
         </CardContent>
       </Card>
 
-      {/* Navigation */}
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline"
-          disabled={step === 0}
-          onClick={() => setStep((s) => s - 1)}
-        >
-          <ChevronLeft className="mr-2 h-4 w-4" />
-          Back
-        </Button>
+      {/* P5-02: Navigation in a fixed footer — buttons are never inside the scrollable
+          card content area, so they cannot overlap checkboxes or other interactive
+          elements regardless of scroll position. */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background px-4 py-3">
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <Button
+            variant="outline"
+            disabled={step === 0}
+            onClick={() => setStep((s) => s - 1)}
+          >
+            <ChevronLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
 
-        {step < STEPS.length - 1 ? (
-          <Button
-            onClick={() => setStep((s) => s + 1)}
-            disabled={!canProceed()}
-          >
-            Next
-            <ChevronRight className="ml-2 h-4 w-4" />
-          </Button>
-        ) : (
-          <Button
-            onClick={() => void handleSave()}
-            disabled={createExperiment.isPending}
-          >
-            {createExperiment.isPending && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}
-            Save experiment
-          </Button>
-        )}
+          {step < STEPS.length - 1 ? (
+            <Button
+              onClick={() => setStep((s) => s + 1)}
+              disabled={!canProceed()}
+            >
+              Next
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              onClick={() => void handleSave()}
+              disabled={createExperiment.isPending}
+            >
+              {createExperiment.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Save experiment
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )
