@@ -217,7 +217,13 @@ If any agent other than BACKEND-API attempts to edit files under `03-BACKEND-API
 
 ---
 
-## 🔴 CURRENT TASK — Bug Fix Sprint (assigned by PROJECT-LEAD, 2026-05-26)
+## ✅ PRIOR TASK — Bug Fix Sprint (assigned 2026-05-26) — CLOSED, DO NOT RESUME
+
+**Closed by PROJECT-LEAD 2026-08-31.** Verified in source: `ExperimentCreateRequest.features: list[FeatureRef]` is present (`app/schemas/experiments.py` L159), so BUG-001's root cause is fixed; `has_deprecated_features` is present on `ExperimentConfig` (L98), so BUG-002's list-response flag shipped. The `BUG-STATUS.md` deliverable named in B1-B, B2-A and B2-E was never written — that documentation gap is logged in `../00-PROJECT-LEAD/DELEGATIONS.md` and is **not** part of your current task. Do not reopen any item below.
+
+<details>
+<summary>Original sprint text, retained for history</summary>
+
 
 Two bugs found during the v2-23base-faithful-2015-2024 rerun session. Fix both now. Full specs are in `../00-PROJECT-LEAD/BUG-001-CLONE-DROPS-FEATURES.md` and `../00-PROJECT-LEAD/BUG-002-DEPRECATED-FEATURES.md`. Read them before touching code.
 
@@ -247,3 +253,83 @@ Your tasks (B2-A through B2-E):
 
 ### Deprecation policy (set by PROJECT-LEAD)
 Tombstone, do not delete. Deprecated features stay in the catalog with `deprecated = true` so historical experiments remain interpretable.
+
+</details>
+
+---
+
+## 🔴 CURRENT TASK — HC-S0: Hypothesis Chat, Stage 0 (assigned by PROJECT-LEAD, 2026-08-31)
+
+cd /path/to/nfl-prediction-app/03-BACKEND-API
+
+### Task
+
+Produce the scoping question tree as a declared data file, plus the conformance test that makes an invalid tree impossible to merge. This is the contract every later stage of the Hypothesis Chat feature reads. Nothing else in this feature can be built until it exists.
+
+When you are done, `app/scoping/scoping_tree.yaml` declares every question needed to assemble a valid `ExperimentConfig`, and a test proves — in both directions — that the tree and the config schema agree. You are writing a schema and a test. You are not writing endpoints, model calls, or UI.
+
+### Context
+
+- `../00-PROJECT-LEAD/HYPOTHESIS-CHAT-BUILD-PLAN.md` — the full plan. Read §"The question tree is a file, not a prompt" and §"Binary acceptance criteria → Stage 0" before starting. This is the authority; if anything below disagrees with it, the plan wins and you escalate.
+- `../docs/DECISIONS.md` ADR-012 — why the tree is data rather than a prompt. Read it; it explains what you must not break.
+- `app/schemas/experiments.py` — `ExperimentConfig`, `FeatureRef`, `EvaluationConfig`, `MethodologyConfig`, `ModelConfig`, `GameUniverseFilter`. The tree binds to these. They are the source of truth for what fields exist.
+- `app/routers/features.py` and `app/queries/features.py` — the live feature catalog behind `GET /api/v1/features`. Feature options resolve here at ask-time.
+- `app/claude_inference.py` — read for house style only (module shape, validation-before-return, dedicated error class). You are not calling Claude in this stage.
+
+### Scope
+
+In-scope (allowed to touch):
+- `app/scoping/` — new package. `scoping_tree.yaml` and `schema.py` (the Pydantic models describing a tree: `Slot`, `SlotAnswer`) only.
+- `tests/test_scoping_tree.py` — new.
+
+Out-of-scope (must not touch):
+- `app/schemas/experiments.py` and every other existing schema — this feature is additive only
+- Any existing router, query module, or endpoint
+- `app/main.py` — nothing is registered in this stage
+- Anything under `../02-MODELING/`, `../01-DATA-PIPELINE/`, `../04-FRONTEND/`
+- The experiment runner, in any form
+
+Kill-switch — stop immediately and escalate if any of these become true:
+- Building the tree requires adding, renaming or relaxing a field on `ExperimentConfig` or any model it contains. The feature is additive only; if the config genuinely cannot express a needed slot, that is a plan defect and PROJECT-LEAD must revise it.
+- A slot cannot resolve its options from either the live catalog endpoint or an existing schema, and the only way forward is hardcoding a feature or filter list.
+- This stage takes more than 4 hours.
+
+### Requirements
+
+**The tree file.** Each slot declares at minimum: `id`, `binds_to` (dotted path into `ExperimentConfig`, or `null`), `question`, `type`, `required`, and — where the type needs them — `options_from`. `options_from` takes one of three forms and no others: `literal:a,b,c` for closed enums that live in the config schema; `endpoint:/api/v1/features` for the live catalog; `schema:GameUniverseFilter` for options derived from an existing Pydantic model.
+
+**Two kinds of slot.** Config slots carry a `binds_to` path. Record-only slots carry `binds_to: null` — they capture things worth asking that no config field holds. Include at least these two record-only slots, worded as you see fit:
+- a falsifier: what result would make Matt abandon this hypothesis
+- prior attempts: whether a variant has been tested before, and which experiments
+
+These are not decoration. The falsifier is what separates a hypothesis from a fishing trip, and prior attempts is the input the governor layer needs in Stage 4 to detect multiple-comparisons pressure. Do not drop them for being unbound.
+
+**No hardcoded domain values.** The tree must contain zero literal feature names and zero literal filter field names. If `GameUniverseFilter` is widened later to accept more fields, the tree must widen with it and require no edit. This property is the point of the stage — treat it as the acceptance criterion it is.
+
+**The conformance test is the deliverable, not a formality.** It must fail loudly on a tree that would produce an invalid config.
+
+### Acceptance
+
+- [ ] `app/scoping/scoping_tree.yaml` exists and parses
+- [ ] Test asserts every required field of `ExperimentConfig` is bound by exactly one slot; fails if a field is unbound
+- [ ] Test asserts no field is bound by two slots; fails if one is
+- [ ] Test constructs a config from all-slots-filled-with-declared-types and it passes `ExperimentConfig` Pydantic validation
+- [ ] Test fails when a slot is deliberately removed from the tree — prove this by removing one, running the test, and recording the failure output in your handoff
+- [ ] `grep` for any feature name from the live catalog in `scoping_tree.yaml` returns zero matches
+- [ ] Tree contains at least two slots with `binds_to: null`, one of which is a falsifier
+- [ ] Every `options_from` value matches one of the three declared forms
+- [ ] No file outside `app/scoping/` and `tests/test_scoping_tree.py` is modified — `git diff --name-only` shows only these
+- [ ] Existing test suite still passes; record the count before and after
+
+### Escalation
+
+Write questions to `../00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md`.
+Format: the question, what you were doing when you got stuck, what you tried. Then exit. Do not guess forward.
+
+### Returns-with
+
+- Commit SHA
+- Test count before and after
+- The failure output from deliberately removing a slot
+- Wall-clock time
+- The list of slots you declared, with their `binds_to` paths, so PROJECT-LEAD can check coverage against the config without reading the YAML

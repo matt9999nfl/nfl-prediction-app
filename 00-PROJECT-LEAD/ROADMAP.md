@@ -1,8 +1,8 @@
 # ROADMAP — NFL Prediction App
 
 **Owner:** PROJECT-LEAD  
-**Last updated:** 2026-05-23  
-**Status:** Phase 4 complete. Phase 5 Polish Sprint active.
+**Last updated:** 2026-08-31  
+**Status:** Phase 5 complete (three visual verifications outstanding — see `DELEGATIONS.md`). Phase 6 Hypothesis Chat active.
 
 ---
 
@@ -14,7 +14,8 @@
 | 2 | Service Layer | Full self-service platform built | ✅ Complete |
 | 3 | Productionize | App deployed and running in GCP | ✅ Complete |
 | 4 | Validation & Improvements | App does what it says; results are trustworthy | ✅ Complete |
-| 5 | Polish Sprint | App is camera-ready for public launch | 🔄 Active |
+| 5 | Polish Sprint | App is camera-ready for public launch | ✅ Complete |
+| 6 | Hypothesis Chat | Matt states a hypothesis in prose and the platform scopes, briefs and runs it | 🔄 Active |
 
 ---
 
@@ -224,3 +225,50 @@ A targeted bug-fix and polish sprint before the app is shown publicly as part of
 | 008 | FastAPI BackgroundTasks for Phase 2 async processing; swap to Cloud Run Jobs in Phase 3 | Accepted |
 | 009 | model.type uses abstract names in API contract; runner resolves to concrete implementations | Accepted |
 | 010 | Terraform selected for IaC | Accepted |
+
+---
+
+## Phase 6 — Hypothesis Chat 🔄 ACTIVE
+
+**Start date:** 2026-08-31
+**Status:** Plan approved. Stages 0 and 1 dispatched.
+**Plan:** `HYPOTHESIS-CHAT-BUILD-PLAN.md` · **Phase 1 record:** `HYPOTHESIS-CHAT-BRAINSTORM.md` · **Tracking:** `DELEGATIONS.md` · **Decision:** `../docs/DECISIONS.md` ADR-012
+
+### What Phase 6 Is
+
+A page in the app where Matt types a hypothesis in plain English, answers a fixed sequence of scoping questions while a governor layer challenges whether the experiment is worth running, approves a brief rendered from the exact `ExperimentConfig` that will execute, and has the existing runner run it — producing an experiment indistinguishable in `experiments.*` from a wizard-built one. A hypothesis the platform cannot currently express ends in a written capability-gap record rather than a workaround.
+
+Single user (Matt). Not public.
+
+### The constraint that shapes it
+
+The chat is a **client of the write API that already exists** — `POST /api/v1/experiments` and `POST /api/v1/experiments/{id}/runs`. It holds no BigQuery credential and cannot execute SQL or generated code, so ADR-011 is enforced by an absent capability rather than by a rule. The runner is not modified and MODELING has no work in this phase.
+
+### Build order
+
+| Stage | Agent | Job |
+|---|---|---|
+| 0 | BACKEND-API | `scoping_tree.yaml` — the question sequence as declared data — plus its conformance test |
+| 1 | DATA-PIPELINE | `platform.scoping_sessions`, `platform.capability_gaps` |
+| 2 | BACKEND-API | Deterministic core: sessions, slot resolution, assemble, render, hash, approve, dispatch. **Zero AI.** |
+| 3 | BACKEND-API | Extractor — prose to slot pre-fills — and capability-gap detection |
+| 4 | BACKEND-API | Governor — sample size, multiple comparisons, cold-start; advisory, no veto |
+| 5 | FRONTEND | `/experiments/hypothesis` page and components |
+| 6 | TESTING-QA | Test suite — never the context that wrote stages 0–5 |
+| 7 | DEVOPS | Deploy, verify `ANTHROPIC_API_KEY` scope, live smoke test |
+
+Stages 0 and 1 are parallel. Stage 2 is the load-bearing one: after it the feature works end to end with no model in the loop, so stages 3 and 4 are enhancement rather than completion.
+
+### Out of scope — handled elsewhere
+
+Live forward prediction and live odds (separate project). Data-spine remediation, `SEASON_AUTOMATION_PLAN.md` P0–P4 (separate session). Missing features and filters such as OL weight — surfaced *by* this phase as capability gaps, not built before it.
+
+### Phase 6 Complete When
+
+- [ ] A hypothesis typed in prose produces a completed backtest run visible in the experiments list
+- [ ] The approved brief and the executed config cannot disagree — `render()` is pure, and dispatch rejects an unapproved hash
+- [ ] The deterministic core passes its full acceptance set with `ANTHROPIC_API_KEY` unset
+- [ ] An extracted slot cannot be marked answered without explicit confirmation
+- [ ] The governor returns non-empty concerns on at least 5 of 6 deliberately flawed fixture configs
+- [ ] "Teams with heavier O lines perform better in poor weather" produces a capability-gap row naming OL weight, and does not produce one for weather
+- [ ] `ExperimentConfig`, the runner, and every existing endpoint contract are unchanged

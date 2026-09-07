@@ -17,11 +17,11 @@ export default defineConfig({
       // and the browser doesn't hit CORS issues.
       // Change the target if the backend runs on a different port.
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
     },

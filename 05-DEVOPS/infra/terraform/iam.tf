@@ -191,6 +191,15 @@ resource "google_project_iam_member" "pipeline_job_user" {
   member  = "serviceAccount:${google_service_account.pipeline.email}"
 }
 
+# Cloud Run Job invoker for the pipeline scheduler jobs to trigger runs
+# (added 2026-08-31: pipeline-sa had no Cloud Run role at all, which combined
+# with the oidc_token->oauth_token fix in scheduler.tf would still 403 without this)
+resource "google_project_iam_member" "pipeline_invoke_jobs" {
+  project = var.project_id
+  role    = "roles/run.developer"
+  member  = "serviceAccount:${google_service_account.pipeline.email}"
+}
+
 # ── Terraform CI Service Account IAM Roles ─────────────────────────────────────
 
 resource "google_project_iam_member" "terraform_ci_editor" {

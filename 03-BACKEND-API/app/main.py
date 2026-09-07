@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
-from app.routers import datasets, experiments, features, frameworks, games, health, predictions, teams
+from app.routers import datasets, experiments, features, frameworks, games, health, predictions, scoping, teams
 
 logging.basicConfig(
     level=logging.INFO,
@@ -169,6 +169,7 @@ app.include_router(features.router)
 app.include_router(datasets.router)
 app.include_router(frameworks.router)
 app.include_router(teams.router)
+app.include_router(scoping.router)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

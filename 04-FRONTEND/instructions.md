@@ -111,7 +111,13 @@ Do NOT edit files in `03-BACKEND-API/` under any circumstances — not even for 
 
 ---
 
-## 🔴 CURRENT TASK — Bug Fix Sprint (assigned by PROJECT-LEAD, 2026-05-26)
+## ⏸️ PAUSED TASK — Bug Fix Sprint (assigned 2026-05-26) — NOT THE CURRENT TASK
+
+**Paused by PROJECT-LEAD 2026-08-31. Do not resume unless Matt asks.** Its backend counterparts are confirmed shipped (`ExperimentCreateRequest.features`, `has_deprecated_features`), but the FRONTEND items — particularly the F2-E visual verifications — could not be confirmed from source, so this is recorded as *unverified*, not as done. Tracked in `../00-PROJECT-LEAD/DELEGATIONS.md`. Your current task is HC-S5 at the bottom of this file.
+
+<details>
+<summary>Original sprint text, retained for history</summary>
+
 
 Two bugs found during the v2-23base-faithful-2015-2024 rerun session. Fix both now. Full specs are in `../00-PROJECT-LEAD/BUG-001-CLONE-DROPS-FEATURES.md` and `../00-PROJECT-LEAD/BUG-002-DEPRECATED-FEATURES.md`. Read them before touching code.
 
@@ -142,3 +148,103 @@ Your tasks (F2-A through F2-E) — these depend on BACKEND-API deploying new res
 **F2-E:** After BACKEND-API deploys B2-C and B2-D: open `v2-23base-faithful-2015-2024`, confirm the amber banner appears with both deprecated feature names. Open the experiments list, confirm the warning badge is present. Clone the experiment, confirm Step 3 shows N-2 features pre-selected and the alert names `def_qb_hit_rate` and `def_rush_yards_allowed_per_att`.
 
 When done, build and deploy (`npm run build` → `gsutil -m rsync -r -d dist/ gs://nfl-frontend-nfl-model-471509/` → invalidate CDN cache) and write completion notes to `../00-PROJECT-LEAD/BUG-STATUS.md`.
+
+</details>
+
+---
+
+## 🔴 CURRENT TASK — HC-S5: Hypothesis Chat page (assigned by PROJECT-LEAD, 2026-08-31)
+
+cd /path/to/nfl-prediction-app/04-FRONTEND
+
+### Task
+
+Build the page where Matt types a hypothesis in plain English and is walked to an approved, running experiment. The backend is finished and deployed-ready: nine endpoints under `/api/v1/scoping`, 91 passing tests. You are building the interface to them and nothing else.
+
+When you are done, Matt can open `/experiments/hypothesis`, type *"teams with heavier O lines perform better in poor weather"*, answer a fixed sequence of questions, read a brief, approve it, and watch the experiment run — landing in the same experiments list as a wizard-built one.
+
+### Context — read before writing code
+
+- `../00-PROJECT-LEAD/HYPOTHESIS-CHAT-BUILD-PLAN.md` — the plan. Read §"The one architectural idea", §"The two model calls, and their limits", and §"Binary acceptance criteria → Stage 5".
+- `../00-PROJECT-LEAD/PHASE6_STATUS.md` — what S0–S4 actually built, including two places the plan was corrected during the build. Read the S3 section: the acceptance criterion about capability gaps changed, and the UI must show both kinds of gap.
+- `../docs/DECISIONS.md` ADR-012 — the three guarantees. Two of them constrain your UI directly; see Requirements.
+- `../03-BACKEND-API/app/schemas/scoping.py` — the exact response shapes. This is the contract; do not infer it from the plan's prose.
+- Run the backend locally and open `/docs` to see all nine endpoints live before building against them.
+
+Existing patterns to follow, not reinvent: `src/api/client.ts` (throws `ApiRequestError` with `status`/`code`/`requestId`), `src/api/queries.ts` (TanStack Query, keys `['resource', id, 'sub']`), `src/components/ui/*` (existing primitives), `src/pages/ExperimentsNewPage.tsx` (the current wizard — same problem, different shape; read it for conventions and for what to avoid).
+
+### Scope
+
+In-scope:
+- `src/pages/HypothesisChatPage.tsx`
+- `src/components/scoping/*` — suggested split: `SlotPrompt`, `BriefPreview`, `GovernorPanel`, `CapabilityGapNotice`
+- `src/api/scoping.ts` and the matching hooks/types
+- `src/App.tsx` — one route: `/experiments/hypothesis`
+- `src/components/Layout.tsx` — one nav entry
+
+Out-of-scope, do not touch:
+- `ExperimentsNewPage.tsx` — the existing wizard stays exactly as it is. This is an additional door, not a replacement.
+- Anything under `../03-BACKEND-API/`. If an endpoint seems wrong or missing, escalate — do not work around it client-side.
+- Any existing page, and the deploy pipeline.
+
+Kill-switch — stop and escalate if:
+- You need a backend change, a new endpoint, or a changed response shape.
+- You cannot build the flow without holding the config in client state as the source of truth (see Requirements 1).
+- A new npm dependency seems necessary.
+- This exceeds 4 hours.
+
+### Requirements — the three that are not negotiable
+
+**1. The server owns the config. The client never assembles one.**
+Answers go to `POST /sessions/{id}/answers` one at a time and the server returns the next question. Do not build a local form object and submit it at the end — that recreates the drift ADR-012 exists to prevent. The client's job is to render what the server asks and post one answer back.
+
+**2. A pre-fill is never an answer.**
+`POST /sessions/{id}/extract` returns `prefills[]`, each with `confirmed: false`, a `confidence`, and an `evidence_quote` — the words from Matt's hypothesis that produced it. Render the question **still asked**, with the value populated and visibly distinct from something Matt typed, showing the quote. It becomes an answer only when he actively confirms. A pre-filled question that looks answered is the highest-consequence failure in this design; it makes the feature worse than the wizard, because it looks like it asked.
+
+**3. The brief is read-only.**
+`GET /sessions/{id}/brief` returns markdown rendered from the exact config that will run, and the hash it describes. Display it; do not make it editable. Editing happens by re-answering a slot. `POST /sessions/{id}/approve` takes the `config_hash` — send back the one the brief returned, never one you cached earlier. A `409 stale_brief` means an answer changed since it was rendered: re-fetch the brief and tell Matt why, do not retry with a different hash.
+
+### Requirements — the rest
+
+**Question rendering** is driven by `next_question.type` (`text`, `enum`, `multi_select`, `integer`, `float`, `filter`, `object`) and `options_from`, which takes exactly three forms: `literal:a,b,c`, `endpoint:/api/v1/features`, `schema:GameUniverseFilter`. Resolve options from those — never hardcode a feature name or filter field. When the filter schema is widened later, this page must widen with it and need no edit. Show `help` text where present.
+
+**Feature mirroring:** selecting N features runs 2N. Say so, as the existing wizard does (P5-08).
+
+**Capability gaps** come back from `/extract` in two kinds, and the difference is the point:
+- `feature_catalog` — the measurement does not exist at all (OL weight)
+- `filter_schema` — it exists as a model feature but the game universe cannot be restricted by it (weather)
+
+Show both with their `nearest_expressible` and `suggested_definition`. Do not collapse them into one "not supported" message; a gap Matt can work around by changing his slice is a different situation from one that needs new data loaded.
+
+**Governor panel:** `GET /sessions/{id}/review` returns `verdict`, `concerns[]` with severity, `evaluated_games`, `slice_fraction`. It is **advisory** — `advisory_only: true` — and must never disable the approve or dispatch button. Surface a `reconsider` verdict clearly and let Matt proceed anyway. A governor that blocks becomes a thing to route around.
+
+**Degradation:** `extract` may return `extraction_unavailable: true` (no API key, or the call failed). That is normal, not an error state — the session completes by answering every question. `review` may 409 before completion. Neither can prevent reaching a run.
+
+**Errors:** the API returns a flat envelope — `{error, code, request_id}` at the top level, not nested under `detail`. Use `code` to distinguish `stale_brief`, `approval_mismatch`, `not_approved`, `incomplete_scoping`, `already_dispatched`.
+
+### Acceptance
+
+- [ ] `/experiments/hypothesis` renders; `/experiments/new` still renders the existing wizard unchanged
+- [ ] A full session runs end to end against the local backend: hypothesis → questions → brief → approve → dispatch → experiment appears in the list
+- [ ] `npm run build` passes with `tsc` clean; no console errors on load in Chrome 124+
+- [ ] Zero hardcoded feature names or filter field names — `grep` the new files and record the result
+- [ ] A pre-filled question is visually distinct from an answered one, shows its evidence quote, and requires an explicit action to become an answer
+- [ ] The brief cannot be edited in place
+- [ ] Approve sends the hash from the most recent brief fetch; a forced `409 stale_brief` shows a clear message and re-fetches rather than retrying
+- [ ] Approve is disabled until every required slot is answered; `missing_required` from the session state drives this
+- [ ] A `reconsider` verdict does NOT disable approve or dispatch — demonstrate this
+- [ ] Both gap kinds render distinguishably, with their suggested definition
+- [ ] With the backend's `ANTHROPIC_API_KEY` unset, the whole flow still completes
+- [ ] No file outside the in-scope list is modified
+
+### Escalation
+
+`../00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md`. The question, what you were doing, what you tried. Then exit. Do not guess forward.
+
+### Returns-with
+
+- Commit SHA, build output, wall-clock time
+- The grep result for hardcoded feature/filter names
+- A screenshot or description of a pre-filled question, showing how it differs from an answered one
+- Confirmation that a `reconsider` verdict still allows dispatch
+- Anything in the backend contract that made the UI awkward — that is signal about the API, and PROJECT-LEAD wants it

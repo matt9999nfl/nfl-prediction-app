@@ -307,3 +307,44 @@ Experiment gates are defined per experiment, not per project phase. When an expe
 - Phase 1 is complete as of 2026-05-03 — data pipeline validated, experiment framework running, two baseline experiments logged
 - Phase 2 is unlocked — BACKEND-API and FRONTEND proceed
 - Model iteration continues in parallel with Phase 2 as the platform evolves; a model clearing its own defined gate is what makes predictions suitable for public surfacing
+
+---
+
+## ADR-012 — Hypothesis chat is a bounded client of the existing write API
+**Status:** Accepted
+**Date:** 2026-08-31
+
+### Context
+The project owner wants to state a hypothesis in plain English — e.g. "teams with heavier O lines perform better in poor weather" — be taken through scoping questions, approve a written brief, and have the experiment run. ADR-011 established that experiments run in the platform, not in Claude chat. A chat interface inside the platform sits close enough to that boundary that the boundary has to be drawn structurally, not stated.
+
+Phase 1 brainstorm: `00-PROJECT-LEAD/HYPOTHESIS-CHAT-BRAINSTORM.md`. Implementation plan: `00-PROJECT-LEAD/HYPOTHESIS-CHAT-BUILD-PLAN.md`.
+
+### Decision
+Three commitments, each structural rather than instructed.
+
+**1. The chat is a client of the write API that already exists.** Its only path into the platform is `POST /api/v1/experiments` and `POST /api/v1/experiments/{id}/runs`. It holds no BigQuery credential, has no query path, and cannot execute generated code. It cannot do anything a wizard user could not do. ADR-011 is therefore enforced by the absence of a capability, not by a rule the model weighs.
+
+**2. The question sequence is declared data, not a prompt.** `app/scoping/scoping_tree.yaml` declares every slot, its question text, its type, and where its options resolve from. A CI conformance test asserts that every required `ExperimentConfig` field is bound by exactly one slot and that a fully-filled tree produces a config passing Pydantic validation — so a question sequence that could produce an invalid config fails the build. Feature options resolve from the live catalog at ask-time and filter options from the `GameUniverseFilter` schema, so the tree cannot drift from the platform and widens automatically when those surfaces widen.
+
+**3. The brief is rendered from the config, never authored alongside it.** `render()` is a pure template function with no model call; approval is recorded against the sha256 of the canonical config and dispatch refuses any config whose hash was not approved. The failure being closed is approving one document while a different one executes, which is silent by nature.
+
+Two bounded model calls exist: an extractor (prose → slot pre-fills, which are never marked answered without explicit confirmation) and a governor (completed config + prior-run history → concerns and a verdict, advisory only, no veto). Both return fixed key sets validated before return. When a hypothesis needs something the platform cannot express, the chat writes a `capability_gaps` record and stops — it does not work around the gap.
+
+### Alternatives Considered
+- **Free SQL or code execution against BigQuery** — rejected. Answers almost any hypothesis immediately, and re-opens exactly what ADR-011 closed: results that live in a conversation, are not reproducible, and cannot be viewed or shared in the app.
+- **LLM-driven question flow** — rejected. Slot-filling and governance fail differently; testing them as one prompt makes both untestable. Split into a deterministic tree (rule engine) and a governor (judgment).
+- **Prose-authored brief with the config parsed from it** — rejected. More editable, but reintroduces brief/config disagreement from the other direction.
+- **Letting the chat extend the feature catalog** — rejected for this build. It is what would unlock the OL-weight example, but it makes the catalog something the chat writes to. Revisit as its own plan.
+
+### Consequences
+- MODELING has no work in this build; the experiment runner is not modified. A task appearing to require a runner change is a kill-switch condition, not a task.
+- The feature is additive only. Any required change to `ExperimentConfig` or an existing endpoint contract stops the build and returns here.
+- Experiments created through the chat are indistinguishable in `experiments.*` from wizard-built ones — same tables, same runner, same reproducibility.
+- The deterministic core (stage 2 of the plan) is a complete, usable feature with zero AI, and ships before either model call. If the AI layers slip, a working feature still exists.
+- Two new `platform.*` tables: `scoping_sessions` and `capability_gaps`.
+- The gap record becomes the project's queue of missing features and filters — the first entries will be OL weight, and weather as a game-universe slice rather than a model input.
+
+### Revisit If
+- The feature becomes multi-user or public-facing. It is single-user (Matt) by decision; auth, quotas and abuse handling were all deferred on that basis.
+- Live forward prediction lands from its separate project — the experiment object gains a lifecycle and the chat will need to register experiments as live.
+- The governor proves decorative in practice despite the fixture floor, in which case the layer is either strengthened or removed rather than left as wallpaper.

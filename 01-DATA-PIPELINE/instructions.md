@@ -174,3 +174,95 @@ All jobs run as Cloud Functions or Cloud Run jobs in project `nfl-model-471509`.
 - **Treating raw data as authoritative.** Raw is a landing pad. Curated is the truth.
 - **Letting the schema drift.** If a source adds a column, decide deliberately whether to ingest it.
 - **Stopping at structural validation.** Row counts and null rates confirm the data arrived. They say nothing about whether derived fields are logically correct. Always run semantic distribution checks on computed columns before handing off.
+
+---
+
+## 🔴 CURRENT TASK — HC-S1: Hypothesis Chat, Stage 1 (assigned by PROJECT-LEAD, 2026-08-31)
+
+cd /path/to/nfl-prediction-app/01-DATA-PIPELINE
+
+### Task
+
+Create two new BigQuery tables in the `platform` dataset that the Hypothesis Chat feature persists to. When you are done, a scoping session and a capability-gap record can each be written and read back with every field intact, and no existing table has changed. This is a schema-creation task with a migration script and a documented schema — nothing reads or writes these tables yet.
+
+Runs in parallel with BACKEND-API's Stage 0; there is no dependency between you.
+
+### Context
+
+- `../00-PROJECT-LEAD/HYPOTHESIS-CHAT-BUILD-PLAN.md` — §"Component structure → New — 01-DATA-PIPELINE" gives the intended columns, and §"Binary acceptance criteria → Stage 1" is the gate. The plan is the authority; if anything below disagrees with it, the plan wins and you escalate.
+- `../docs/DECISIONS.md` ADR-012 — why these two tables exist and what they are for.
+- `../docs/PIPELINE_SCHEMA_MIGRATION_PHASE2.md` — the pattern used when `platform.*` was created in Phase 2. Follow it.
+- Existing `platform.experiment_configs` — `scoping_sessions.experiment_id` references its `experiment_id`. Match the type exactly.
+
+### Scope
+
+In-scope (allowed to touch):
+- A new migration script under `scripts/`, following the Phase 2 naming and structure
+- `schemas/scoping_sessions.json` and `schemas/capability_gaps.json` (or `.sql`, matching whatever the existing convention is — check before choosing)
+- The two new tables in BigQuery, in `nfl-model-471509`
+
+Out-of-scope (must not touch):
+- Every existing table in `platform`, `curated`, `raw_nflfastr`, `experiments`, `raw_lines`, `user_datasets` — no added columns, no altered types, no backfills
+- Any adapter, any scheduled job, any ingest code
+- The `SEASON_AUTOMATION_PLAN.md` work (P0 scheduler fix, the staged OL backfill) — that is a different session's task and is explicitly not yours right now
+- Anything under the other agent folders
+
+Kill-switch — stop immediately and escalate if any of these become true:
+- Creating either table appears to require altering an existing table
+- The Phase 2 migration pattern cannot be followed and you would be inventing a new one
+- You do not have working credentials against `nfl-model-471509`. Do not improvise around this — a partial or hand-made table is worse than no table. Escalate and exit.
+- This stage takes more than 4 hours.
+
+### Table requirements
+
+`platform.scoping_sessions` — one row per hypothesis-scoping conversation:
+
+| Column | Type | Notes |
+|---|---|---|
+| `session_id` | STRING | primary identifier |
+| `hypothesis_text` | STRING | the raw prose Matt typed |
+| `slot_answers` | JSON | answers keyed by slot id, including record-only slots |
+| `config` | JSON | the assembled `ExperimentConfig`, null until complete |
+| `config_hash` | STRING | sha256 of the canonical config, null until assembled |
+| `approved_hash` | STRING | null until approved — dispatch compares against this |
+| `status` | STRING | `scoping` \| `assembled` \| `approved` \| `dispatched` \| `abandoned` |
+| `experiment_id` | STRING | null until dispatched; type must match `platform.experiment_configs.experiment_id` |
+| `created_at` / `updated_at` | TIMESTAMP | |
+
+`platform.capability_gaps` — one row per thing the platform could not express:
+
+| Column | Type | Notes |
+|---|---|---|
+| `gap_id` | STRING | primary identifier |
+| `session_id` | STRING | the session that surfaced it |
+| `requested_concept` | STRING | what was asked for, in Matt's words |
+| `why_unavailable` | STRING | which surface is missing it — feature catalog, filter schema, or target |
+| `nearest_expressible` | STRING | the closest thing the platform can currently do |
+| `suggested_definition` | STRING | a concrete proposed definition, nullable |
+| `status` | STRING | `open` \| `planned` \| `built` \| `declined` |
+| `created_at` | TIMESTAMP | |
+
+`config` and `slot_answers` are JSON because their shape is owned by `ExperimentConfig` and by the scoping tree respectively. Do not flatten them into columns — that would create a second definition of a schema that already has one, and it would drift.
+
+### Acceptance
+
+- [ ] `platform.scoping_sessions` and `platform.capability_gaps` exist in `nfl-model-471509`
+- [ ] A row can be written to each and read back with all fields intact, JSON columns round-tripping without loss — demonstrate with an actual write and read, not a dry run
+- [ ] `experiment_id` in `scoping_sessions` has the same type as `platform.experiment_configs.experiment_id` — state both types in your handoff
+- [ ] `bq show` on every pre-existing `platform.*` table shows a schema identical to before this task — capture before/after and confirm
+- [ ] The migration script is idempotent: running it twice leaves the same two tables and does not error
+- [ ] A schema file exists for each table, in whatever format the existing convention uses
+- [ ] No scheduled job, adapter, or ingest path was modified — `git diff --name-only` shows only new files
+
+### Escalation
+
+Write questions to `../00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md`.
+Format: the question, what you were doing when you got stuck, what you tried. Then exit. Do not guess forward.
+
+### Returns-with
+
+- Commit SHA
+- The `bq show` before/after evidence for existing `platform.*` tables
+- Proof of the round-trip write and read on both new tables
+- Confirmation the migration script was run twice: second run exits 0 and leaves exactly the same two tables
+- Wall-clock time

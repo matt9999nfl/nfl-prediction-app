@@ -17,9 +17,8 @@ resource "google_cloud_scheduler_job" "pipeline_full_weekly" {
       "Content-Type" = "application/json"
     }
 
-    oidc_token {
+    oauth_token {
       service_account_email = google_service_account.pipeline.email
-      audience              = "https://${var.region}-run.googleapis.com/"
     }
   }
 
@@ -43,9 +42,8 @@ resource "google_cloud_scheduler_job" "pipeline_gameday_sunday" {
       "Content-Type" = "application/json"
     }
 
-    oidc_token {
+    oauth_token {
       service_account_email = google_service_account.pipeline.email
-      audience              = "https://${var.region}-run.googleapis.com/"
     }
   }
 
@@ -69,9 +67,8 @@ resource "google_cloud_scheduler_job" "pipeline_gameday_monday" {
       "Content-Type" = "application/json"
     }
 
-    oidc_token {
+    oauth_token {
       service_account_email = google_service_account.pipeline.email
-      audience              = "https://${var.region}-run.googleapis.com/"
     }
   }
 
@@ -95,9 +92,8 @@ resource "google_cloud_scheduler_job" "pipeline_gameday_thursday" {
       "Content-Type" = "application/json"
     }
 
-    oidc_token {
+    oauth_token {
       service_account_email = google_service_account.pipeline.email
-      audience              = "https://${var.region}-run.googleapis.com/"
     }
   }
 
@@ -121,9 +117,8 @@ resource "google_cloud_scheduler_job" "production_refresh_weekly" {
       "Content-Type" = "application/json"
     }
 
-    oidc_token {
+    oauth_token {
       service_account_email = google_service_account.runner.email
-      audience              = "https://${var.region}-run.googleapis.com/"
     }
   }
 

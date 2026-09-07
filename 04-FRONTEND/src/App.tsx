@@ -6,6 +6,7 @@ import { ModelPage } from '@/pages/ModelPage'
 import { DatasetsPage } from '@/pages/DatasetsPage'
 import { DatasetDetailPage } from '@/pages/DatasetDetailPage'
 import { ExperimentsNewPage } from '@/pages/ExperimentsNewPage'
+import { HypothesisChatPage } from '@/pages/HypothesisChatPage'
 import { ExperimentDetailPage } from '@/pages/ExperimentDetailPage'
 import { FrameworksPage } from '@/pages/FrameworksPage'
 import { FrameworkDetailPage } from '@/pages/FrameworkDetailPage'
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
           <Route path="/experiments" element={<ModelPage />} />
           <Route path="/experiments/new" element={<ExperimentsNewPage />} />
+          <Route path="/experiments/hypothesis" element={<HypothesisChatPage />} />
           <Route path="/experiments/:id" element={<ExperimentDetailPage />} />
           <Route path="/model" element={<Navigate to="/experiments" replace />} />
           <Route path="/frameworks" element={<FrameworksPage />} />

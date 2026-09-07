@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "binds_to_model": "ExperimentCreateRequest",
+  "_notes": [
+    "THE QUESTION SEQUENCE IS DATA. Do not move any of this into a prompt.",
+    "binds_to is a dotted path into ExperimentCreateRequest. null marks a RECORD-ONLY slot.",
+    "Record-only slots are not decoration. 'mechanism' and 'falsifier' are what separate a hypothesis from a fishing trip; 'prior_attempts' is the input the Stage 4 governor needs to detect multiple-comparisons pressure. Do not drop them for being unbound.",
+    "options_from takes exactly three forms: literal:a,b,c | endpoint:/path | schema:ModelName.",
+    "There are ZERO hardcoded feature names and ZERO hardcoded filter fields in this file, by design. When GameUniverseFilter is widened to accept more of curated.games, this tree widens with it and needs no edit. That property is the point.",
+    "Bound to ExperimentCreateRequest rather than ExperimentConfig deliberately: ExperimentConfig.target was loosened to plain str for legacy BigQuery rows, so binding there would let the tree emit an invalid target and still pass."
+  ],
+  "slots": [
+    {
+      "id": "mechanism",
+      "binds_to": null,
+      "question": "Why would this be true? What's the causal story?",
+      "help": "A hypothesis with a mechanism can be wrong in an informative way. One without a mechanism is a pattern search, and it should be labelled as one.",
+      "type": "text",
+      "required": true
+    },
+    {
+      "id": "target",
+      "binds_to": "target",
+      "question": "What outcome are you predicting?",
+      "type": "enum",
+      "options_from": "literal:ats_cover,outright_winner,total_over,team_total_yards",
+      "required": true,
+      "default": "ats_cover"
+    },
+    {
+      "id": "features",
+      "binds_to": "features",
+      "question": "Which measurements should the model see?",
+      "help": "Each selection is mirrored home/away — selecting N features runs 2N in the model.",
+      "type": "multi_select",
+      "options_from": "endpoint:/api/v1/features",
+      "required": true
+    },
+    {
+      "id": "game_universe",
+      "binds_to": "methodology.game_universe",
+      "question": "Restrict this to a subset of games, or use all regular-season games?",
+      "help": "This is the slice. A hypothesis of the form 'X holds when Y' is answered here, not by adding Y as another feature.",
+      "type": "filter",
+      "options_from": "schema:GameUniverseFilter",
+      "required": false,
+      "default": null
+    },
+    {
+      "id": "start_season",
+      "binds_to": "methodology.start_season",
+      "question": "First season to include?",
+      "type": "integer",
+      "required": true,
+      "default": 2015
+    },
+    {
+      "id": "end_season",
+      "binds_to": "methodology.end_season",
+      "question": "Last season to include?",
+      "type": "integer",
+      "required": true,
+      "default": 2025
+    },
+    {
+      "id": "train_seasons",
+      "binds_to": "methodology.train_seasons",
+      "question": "How many seasons in each training window?",
+      "type": "integer",
+      "required": true,
+      "default": 4
+    },
+    {
+      "id": "test_seasons",
+      "binds_to": "methodology.test_seasons",
+      "question": "How many seasons held out per fold?",
+      "type": "integer",
+      "required": true,
+      "default": 1
+    },
+    {
+      "id": "methodology_type",
+      "binds_to": "methodology.type",
+      "question": "Which backtest methodology?",
+      "type": "enum",
+      "options_from": "literal:walk_forward",
+      "required": false,
+      "default": "walk_forward"
+    },
+    {
+      "id": "model_type",
+      "binds_to": "model.type",
+      "question": "Which model family?",
+      "type": "enum",
+      "options_from": "literal:xgboost,logistic_regression,random_forest",
+      "required": true,
+      "default": "xgboost"
+    },
+    {
+      "id": "hyperparams",
+      "binds_to": "model.hyperparams",
+      "question": "Any non-default hyperparameters?",
+      "help": "Leave empty unless you have a reason. Tuning across many runs is itself a multiple-comparisons problem.",
+      "type": "object",
+      "required": false,
+      "default": {}
+    },
+    {
+      "id": "metric",
+      "binds_to": "evaluation.metric",
+      "question": "Which metric decides whether this worked?",
+      "type": "enum",
+      "options_from": "literal:ats_hit_rate,accuracy,log_loss,rmse",
+      "required": true,
+      "default": "ats_hit_rate"
+    },
+    {
+      "id": "success_threshold",
+      "binds_to": "evaluation.success_threshold",
+      "question": "What value of that metric would count as success?",
+      "help": "Set this before you see the result. Against closing lines, anything above ~0.57 on the full game universe is a leakage suspect, not a win.",
+      "type": "float",
+      "required": true,
+      "default": 0.53
+    },
+    {
+      "id": "min_sample",
+      "binds_to": "evaluation.min_sample",
+      "question": "Minimum number of games for the result to mean anything?",
+      "help": "Checked against the slice you chose above. A narrow slice can leave too few games to distinguish an edge from noise.",
+      "type": "integer",
+      "required": true,
+      "default": 500
+    },
+    {
+      "id": "falsifier",
+      "binds_to": null,
+      "question": "What result would make you abandon this hypothesis?",
+      "help": "If no result would, this is not a hypothesis and the run will not teach you anything.",
+      "type": "text",
+      "required": true
+    },
+    {
+      "id": "prior_attempts",
+      "binds_to": null,
+      "question": "Have you tested a variant of this before? Which experiments?",
+      "help": "Feeds the governor's multiple-comparisons check. The fifth variant of an idea needs a higher bar than the first.",
+      "type": "text",
+      "required": false
+    },
+    {
+      "id": "name",
+      "binds_to": "name",
+      "question": "Name this experiment.",
+      "help": "Something you will recognise in a list six weeks from now.",
+      "type": "text",
+      "required": true
+    }
+  ]
+}

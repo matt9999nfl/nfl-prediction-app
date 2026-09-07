@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "_notes": [
+    "Domain concept → what the platform already has. DATA, not a prompt.",
+    "This is the deterministic half of gap detection: before a capability gap is recorded, the concept is resolved here and against the live feature catalog. Only what resolves to nothing becomes a gap.",
+    "Its job is to stop FALSE gaps. A model that reports 'weather' as unavailable is wrong — temp, wind and roof_dome exist — and this file is what corrects it without another model call.",
+    "`features` are catalog column names, checked against the live catalog at runtime; a column listed here that no longer exists is caught by a test, not silently ignored.",
+    "`filterable` says whether the concept can also be used as a GameUniverseFilter slice. Today almost nothing is: the filter schema accepts only div_game and week. A concept with features but filterable=false is expressible as a model input and NOT as a subset — which is a real and different limitation, and the one most hypotheses actually run into."
+  ],
+  "concepts": [
+    {"aliases": ["weather", "bad weather", "poor weather", "adverse weather", "elements"],
+     "features": ["temp", "wind", "roof_dome"], "filterable": false},
+    {"aliases": ["temperature", "cold", "cold weather", "heat", "hot"],
+     "features": ["temp"], "filterable": false},
+    {"aliases": ["wind", "windy", "high wind"],
+     "features": ["wind"], "filterable": false},
+    {"aliases": ["dome", "indoors", "roof", "retractable"],
+     "features": ["roof_dome"], "filterable": false},
+    {"aliases": ["divisional", "division game", "divisional matchup", "in division"],
+     "features": ["div_game"], "filterable": true},
+    {"aliases": ["week", "late season", "early season", "part of season"],
+     "features": [], "filterable": true},
+    {"aliases": ["rest", "rest days", "short week", "bye", "days off"],
+     "features": ["rest_differential"], "filterable": false}
+  ]
+}
