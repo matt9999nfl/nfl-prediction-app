@@ -3,6 +3,7 @@ nflfastR source adapter.
 Wraps nfl_data_py for play-by-play, schedules, and weekly rosters.
 """
 import logging
+from datetime import datetime
 from typing import Optional
 
 import nfl_data_py as nfl
@@ -11,6 +12,16 @@ import pandas as pd
 from adapters.base import SourceAdapter, ValidationResult
 
 logger = logging.getLogger(__name__)
+
+
+def current_season() -> int:
+    """
+    The NFL season we are currently in. Seasons are named for the year they
+    start and run into the following February, so before July we are still in
+    the previous year's season.
+    """
+    now = datetime.now()
+    return now.year - (1 if now.month < 7 else 0)
 
 
 class NflfastrAdapter(SourceAdapter):
@@ -55,8 +66,21 @@ class NflfastrAdapter(SourceAdapter):
         row_count = len(df)
         expected_min = 40_000
         expected_max = 65_000
+        # INC-002 (2026-09-07): the 40k floor describes a COMPLETED season. An
+        # in-progress one legitimately has fewer plays -- week 1 is roughly
+        # 2,700, and 40k is not reached until about week 15. Applying a
+        # completed-season floor to the current season fails every gameday run
+        # for most of the season, which is the opposite of what this validator
+        # is for. For the current season a low count is a fact, not an error.
+        # Completed seasons keep the hard floor: historical data is still
+        # protected, and the column checks below apply to every season.
+        in_progress = season >= current_season()
         if row_count < expected_min:
-            errors.append(f"PBP {season}: only {row_count} rows (expected ≥{expected_min})")
+            message = f"PBP {season}: only {row_count} rows (expected ≥{expected_min})"
+            if in_progress:
+                warnings.append(message + " -- expected for an in-progress season")
+            else:
+                errors.append(message)
         elif row_count > expected_max:
             warnings.append(f"PBP {season}: {row_count} rows exceeds expected max {expected_max}")
         else:

@@ -1,0 +1,13 @@
+# Keep the Cloud Build context (and the resulting image) to just the pipeline code.
+# Added 2026-09-07 during INC-002. Dockerfile.job does `COPY . .`, so anything
+# left here is baked into the production image.
+
+# 29 MB of staged parquet. These are loaded to BigQuery by
+# new_sources_staging/load_to_bigquery.py, which is run manually — the scheduled
+# job never reads them, so they have no business in the image.
+new_sources_staging/
+
+__pycache__/
+*.pyc
+*.log
+.git/

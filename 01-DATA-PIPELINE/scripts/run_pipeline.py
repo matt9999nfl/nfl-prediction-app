@@ -271,8 +271,20 @@ def main():
     if start <= 2:
         null_pct = step("2/7 — Audit closing lines", run_audit_closing_lines)
         if null_pct > 5.0:
-            logger.error("Closing line null rate > 5%. Stopping — review source before curated layer.")
-            sys.exit(1)
+            # Changed 2026-08-31: this used to sys.exit(1) here, which silently blocked
+            # steps 3-7 (PBP/rosters ingest, curated.games/plays, validate) on every
+            # scheduled run once the in-progress season entered the audit window (nflverse
+            # doesn't post closing lines for future weeks this far ahead, so the aggregate
+            # null rate stays > 5% for most of the season). This audit was designed as a
+            # one-time "is nflverse a reliable historical closing-line source" decision
+            # (see scripts/audit_closing_lines.py's docstring), not a per-run production
+            # gate -- its own module docstring already said "prints report; continues
+            # automatically", which the sys.exit(1) below contradicted. Now a warning only.
+            logger.warning(
+                f"Closing line null rate {null_pct:.1f}% > 5% -- continuing anyway. "
+                "Nulls are expected for scheduled games whose lines haven't posted yet "
+                "and will backfill as the season progresses."
+            )
 
     if start <= 3:
         step("3/7 — Ingest raw PBP", run_ingest_pbp, client, adapter)

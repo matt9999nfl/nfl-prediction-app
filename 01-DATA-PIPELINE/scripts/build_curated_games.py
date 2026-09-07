@@ -214,7 +214,9 @@ def main():
     for r in results:
         print(f"  {r['season']}: {r.get('rows', 0):>5,} rows  [{r['status']}]")
 
-    failed = [r for r in results if r["status"] != "OK"]
+    # INC-002: match build_curated_plays.py, which already tolerates EMPTY.
+    # A season with no completed games yet is not a build failure.
+    failed = [r for r in results if r["status"] not in ("OK", "EMPTY")]
     if failed:
         sys.exit(1)
 

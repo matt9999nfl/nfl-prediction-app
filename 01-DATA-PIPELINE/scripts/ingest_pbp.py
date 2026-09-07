@@ -49,6 +49,15 @@ def ingest_season(client: bigquery.Client, adapter: NflfastrAdapter, season: int
     logger.info(f"=== PBP season {season} ===")
 
     df = adapter.fetch_pbp(season)
+
+    # INC-002: a season with no plays yet (not started, or between the schedule
+    # release and week 1) is EMPTY, not failed. run_pipeline treats EMPTY as
+    # tolerable; loading an empty frame would write nothing and risk a schema
+    # autodetect error on the partition.
+    if len(df) == 0:
+        logger.info(f"PBP {season}: no plays available yet -- skipping load (EMPTY)")
+        return {"season": season, "rows": 0, "status": "EMPTY"}
+
     result = adapter.validate_pbp(df, season)
     logger.info(str(result))
     if not result.passed:

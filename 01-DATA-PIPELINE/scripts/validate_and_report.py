@@ -25,7 +25,36 @@ def run_query(client, sql: str):
     return client.query(sql).to_dataframe()
 
 
+def is_in_progress_season(label: str) -> bool:
+    """
+    True when a check label refers to the season currently being played.
+
+    Labels embed their season (`pbp_2026_row_count`, `spread_null_rate_2026`),
+    so this catches every per-season check at one choke point.
+    """
+    token = str(CURRENT_SEASON)
+    return f"_{token}_" in label or label.endswith(f"_{token}")
+
+
 def check(condition: bool, label: str, results: list) -> bool:
+    """
+    Record a check. Returns whether it should count toward pass/fail.
+
+    INC-002 (2026-09-07): every threshold in this report describes a COMPLETED
+    season -- full row counts, populated closing lines, settled cover rates.
+    The season being played satisfies none of them until it is over, so
+    applying them to it fails the report on every run all season and takes the
+    pipeline's exit code with it.
+
+    In-progress checks are still RUN and still REPORTED, so nothing is hidden;
+    they are simply advisory and do not fail the run. Completed seasons are
+    unchanged -- the historical guarantees this report exists to provide are
+    exactly as strict as they were.
+    """
+    if is_in_progress_season(label):
+        results.append((label, "⚠️ IN-PROGRESS" if not condition else "✅ PASS"))
+        return True
+
     status = "✅ PASS" if condition else "❌ FAIL"
     results.append((label, status))
     return condition
@@ -46,6 +75,12 @@ def main(client=None):
     lines.append(f"\n**Generated:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append(f"**Project:** `{PROJECT}`")
     lines.append(f"**Seasons:** 2015–{CURRENT_SEASON}")
+    lines.append(
+        f"\n> Checks for **{CURRENT_SEASON}** are advisory: that season is still being "
+        f"played, so completed-season thresholds do not apply to it yet. They are "
+        f"shown as ⚠️ IN-PROGRESS and do not fail this report. Every earlier season "
+        f"is held to the full standard."
+    )
 
     # ------------------------------------------------------------------ #
     # 1. Row counts — raw tables                                          #

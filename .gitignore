@@ -32,3 +32,10 @@ commit_msg.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Staged source parquet — 29 MB of data files, not source. Loaded to BigQuery
+# by new_sources_staging/load_to_bigquery.py; see SEASON_AUTOMATION_PLAN P1.
+01-DATA-PIPELINE/new_sources_staging/
+
+# Agent session scratch
+04-FRONTEND/_to_delete/
