@@ -125,6 +125,19 @@ Independently test the Hypothesis Chat feature (Phase 6, stages 0–5). When you
 
 The single most important thing you will do: **stages 0–5 have never run against live storage.** Every test to date used mocks or an in-memory stand-in. You are the first pass where the feature meets `nfl-model-471509`.
 
+### Changed since this brief was written — read before starting
+
+**The scoping backend is now LIVE in production.** Deploying an unrelated fix on 2026-09-08 rebuilt `nfl-backend-api` from current source, which included the Phase 6 router. Revision `nfl-backend-api-00024-kw7`. `GET /api/v1/scoping/capability-gaps` returns 200 against the real `platform.*` tables.
+
+That was not planned and it bypassed this gate. Two consequences for you:
+
+1. **Test the deployed revision as well as a local backend.** The live one is the thing that can hurt Matt. `https://nfl-backend-api-rmaehdhzhq-uc.a.run.app`.
+2. **Be careful what you write.** Live BigQuery now has a real API in front of it. Your integration tests must clean up after themselves — `platform.scoping_sessions` and `platform.capability_gaps` are production tables, and `experiments.*` and `curated.*` are off limits entirely.
+
+**A worked example of what you are hunting for.** On the same day, `GET /api/v1/games` was found to 500 for every season with completed games: the SQL emitted `'complete'` while `Game.status` is `Literal["scheduled", "final"]`. Every row with a score failed validation. It survived because the list sorts `season DESC` and the first page happened to be unplayed 2026 fixtures — so the endpoint looked healthy while every historical season was broken.
+
+That is the archetype. Not "does the function work" but **"what does this do when the data is real, and what makes the failure invisible?"** Five bugs of that shape surfaced in one day across this project. Assume there are more in the scoping code and go looking for them specifically.
+
 ### Why this is yours and not the builder's
 
 `../agent-methodology/CLAUDE.md` core principle 6: never self-audit — the session that produced the output shares its blind spots. Stages 0–4 were written by PROJECT-LEAD and stage 5 by FRONTEND. **You did not write any of it, and you must not modify any of it.**
@@ -193,6 +206,7 @@ Assert structurally that nothing under `app/scoping/` constructs a BigQuery clie
 ### Acceptance
 
 - [ ] At least one `integration`-marked test completes a full session against real BigQuery and asserts the persisted rows
+- [ ] At least one test runs against the DEPLOYED revision, not only a local backend
 - [ ] JSON round-trip asserted for nested arrays and explicit nulls
 - [ ] All test rows removed afterwards — verified by a post-run count, not assumed
 - [ ] At least five distinct attacks on the approval guarantee, each named for what it attempts

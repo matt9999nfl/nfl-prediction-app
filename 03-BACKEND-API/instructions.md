@@ -258,7 +258,11 @@ Tombstone, do not delete. Deprecated features stay in the catalog with `deprecat
 
 ---
 
-## 🔴 CURRENT TASK — HC-S0: Hypothesis Chat, Stage 0 (assigned by PROJECT-LEAD, 2026-08-31)
+## ✅ COMPLETED — HC-S0: scoping tree + conformance test (2026-08-31)
+
+Delivered: `app/scoping/scoping_tree.json`, `schema.py`, `tests/test_scoping_tree.py`. 16 tests. Not the current task — see HC-S6-FIX at the bottom of this file.
+
+<details><summary>Original HC-S0 brief</summary>
 
 cd /path/to/nfl-prediction-app/03-BACKEND-API
 
@@ -333,3 +337,88 @@ Format: the question, what you were doing when you got stuck, what you tried. Th
 - The failure output from deliberately removing a slot
 - Wall-clock time
 - The list of slots you declared, with their `binds_to` paths, so PROJECT-LEAD can check coverage against the config without reading the YAML
+
+</details>
+
+---
+
+## 🔴 CURRENT TASK — HC-S6-FIX: six defects found by TESTING-QA (assigned by PROJECT-LEAD, 2026-09-08)
+
+cd /path/to/nfl-prediction-app/03-BACKEND-API
+
+**Read `../00-PROJECT-LEAD/HC-S6-RULINGS.md` first.** It has every finding, the reasoning, and the ruling. Do not re-litigate the rulings; implement them. `../00-PROJECT-LEAD/HC-S6-FINDINGS.md` and `../06-TESTING-QA/integration/test_hypothesis_chat.py` have the evidence.
+
+### Context you need before touching anything
+
+These are defects in code PROJECT-LEAD wrote across stages 2–4. **They survived 91 passing tests**, and the reason matters more than any individual fix: the tests validated the implementation against a model of the world the same author wrote. TESTING-QA replaced that model with real BigQuery and four things fell over immediately.
+
+The most instructive one: `test_changing_an_answer_after_approval_blocks_dispatch` passes today. It passes because the in-memory `Store` in `tests/test_scoping_api.py` clears `approved_hash`, and the real SQL never does. **The fake was kinder than production, so the test guarding the feature's core guarantee has been green while the guarantee was broken.**
+
+If you fix the SQL and leave that fake alone, the test stays green and tells you nothing. Fix the fake too. Treat "would this test fail if the behaviour regressed?" as the question, not "does it pass?"
+
+The scoping backend is **live in production** (`nfl-backend-api-00024-kw7`), so F1 and F4 below are live defects. The frontend is not deployed and writes require `OWNER_API_KEY`, which is the only reason this is not an incident.
+
+### The six fixes
+
+**F1 — `approved_hash` is never cleared in storage.** `app/queries/scoping.py::update_answers` sets `slot_answers`, `config`, `config_hash`, `status` — not `approved_hash`. The router mutates it to `None` on the response dict only, so the API reports the approval as cleared while the row keeps it. Add it to the `UPDATE`, stop implying it in the router, and correct the in-memory `Store` so the guard test can actually fail.
+
+**F2 — the hash does not cover the whole brief.** It covers the `ExperimentConfig`; the brief also renders `mechanism`, `falsifier` and `prior_attempts`. Change the falsifier after approving and the hash does not move — TESTING-QA's output shows two briefs, differing only in that line, carrying an identical hash. ADR-012 commitment 3 says the approved artefact and the executed artefact cannot differ. Make the approval hash cover everything `render()` consumes: config **and** record-only answers.
+
+**F3 — the governor's sample-size arithmetic is wrong.** `governor.evaluated_games` computes `folds * test_seasons * 272` with `folds = span - train_seasons`. The runner (`../02-MODELING/backtests/walk_forward.py::build_folds_from_config`) does `test += test_seasons` and returns `(train_list, test_season)` — `test_seasons` is the **stride**, and every fold evaluates exactly one season. The two agree only at `test_seasons=1`, which is the one value the existing test asserts.
+
+Do not just patch the formula. **Remove the duplication**: derive folds using the same algorithm as the runner, and add a test asserting the governor's fold count equals `len(build_folds_from_config(...))` across a matrix of `train_seasons` × `test_seasons`. Two definitions of "a fold" in one codebase is the root cause.
+
+**F4 — anonymous reads.** `GET /scoping/capability-gaps` and `GET /scoping/sessions/{id}` are open to the internet. The gap list is a readable index of what the platform cannot do; sessions carry unpublished research thinking. Add `require_api_key` to the scoping read endpoints. TESTING-QA has an assertion pinning the current behaviour — invert it rather than deleting it.
+
+**F6 — safety layers fail open and silent.** `review_session` swallows BigQuery errors and continues with `fraction=None`, `priors=[]`, returning a clean 200 with an empty concern list — having checked nothing, and degrading toward a *larger* apparent sample. `extract` drops a `capability_gaps` insert that raised, so "the write failed" looks like "there are no gaps".
+
+**A check that could not run is not a check that passed.** When an input cannot be loaded, emit a concern naming what could not be verified and do not return `proceed`. Report a gap that failed to persist. Silence must never have the same shape as safety.
+
+**F9 — the hash is not stable across a storage round-trip.** BigQuery JSON returns `2.0` as `2`. `hashing.py` deliberately treats int and float as different configs; `dispatch` recomputes from values read back out of BigQuery. So any config holding a whole-number float can never match its own approval — it fails closed, and wedges the session permanently.
+
+Make `canonical_json` idempotent across storage: a float with zero fractional part canonicalises to its integer form. Delete the comment claiming the distinction; storage never honoured it. Add a test that hashes, round-trips through BigQuery, rehashes, and asserts equality.
+
+**F10 — concurrent answer and approve wedges a session.** Both endpoints read, decide, then write unconditionally. A race attaches an approval to answers it was not computed from; dispatch refuses and nothing explains why. Put the expected config hash in `set_approved_hash`'s `WHERE` clause so a lost race writes zero rows and returns 409.
+
+### Also build
+
+**Dry-run dispatch** (`../00-PROJECT-LEAD/HC-S6-RULINGS.md` Q2). Today there is no way to exercise dispatch without creating a real experiment and firing the production runner, so the feature's most consequential path is untestable. Add a mode that runs every validation and hash check, returns the payload it *would* create, and writes nothing.
+
+### Scope
+
+In-scope: `app/scoping/**`, `app/queries/scoping.py`, `app/routers/scoping.py`, `app/schemas/scoping.py`, `tests/test_scoping_*.py`.
+
+Out-of-scope: `../02-MODELING/**` — read `build_folds_from_config`, do not change it; it is the reference. `../06-TESTING-QA/**` — their tests are the specification you are fixing against; if one is wrong, escalate rather than edit. Any endpoint outside `/scoping`. `ExperimentConfig` and the runner.
+
+Kill-switch — stop and escalate:
+- A fix requires changing `ExperimentConfig`, the runner, or an existing non-scoping endpoint.
+- F2 cannot be done without changing what `render()` outputs — that would invalidate every brief already approved, and is a decision for PROJECT-LEAD.
+- A TESTING-QA test appears wrong. Escalate; do not edit their file.
+- Over 4 hours.
+
+### Acceptance
+
+- [ ] `update_answers` clears `approved_hash` in SQL; verified against real BigQuery, not a fake
+- [ ] The in-memory `Store` matches the real SQL — demonstrate the guard test FAILS when the SQL fix is reverted
+- [ ] Approval hash covers config **and** record-only answers; changing only the falsifier invalidates it
+- [ ] Governor fold count equals `len(build_folds_from_config(...))` across a `train_seasons` × `test_seasons` matrix
+- [ ] Scoping reads require the API key; anonymous callers get 401
+- [ ] `review` with a raising BigQuery client returns concerns naming what it could not check, and does not return `proceed`
+- [ ] A failed gap insert is reported, not dropped
+- [ ] Hash survives a BigQuery round-trip, asserted with a real round-trip
+- [ ] A lost approve race writes zero rows and returns 409
+- [ ] Dry-run dispatch writes nothing — asserted by row counts before and after
+- [ ] `../06-TESTING-QA/integration/test_hypothesis_chat.py` passes: the four failures were the specification
+- [ ] All 91 existing backend scoping tests still pass
+- [ ] No file outside the in-scope list modified
+
+### Escalation
+
+`../00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md`. The question, what you were doing, what you tried. Then exit.
+
+### Returns-with
+
+- Which acceptance criteria are met, and any that are not
+- **Proof each guard bites**: revert the fix, show the test failing, restore. A green test that would stay green through a regression is worth nothing here — that is the whole lesson of this task.
+- The before/after `test_hypothesis_chat.py` result
+- Anything in the rulings you think is wrong. They were written by the person who wrote the bugs.

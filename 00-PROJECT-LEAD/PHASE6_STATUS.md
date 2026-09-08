@@ -13,7 +13,7 @@
 | S4 — governor | built directly | ✅ Complete |
 | S5 — chat page | FRONTEND | ✅ Complete (one caveat — see below) |
 | S6 — test suite | TESTING-QA | 🔴 Dispatched 2026-08-31 |
-| S7 — deploy | DEVOPS | ⛔ Blocked on S6 |
+| S7 — deploy | DEVOPS | ⚠️ Backend went live early — see below |
 
 ---
 
@@ -233,7 +233,25 @@ Six findings raised, all verified in source here rather than taken on report. Sp
 
 ---
 
-## Repo-wide issue found while verifying — not part of this build
+## ⚠️ S7 partially happened by accident — 2026-09-08
+
+Deploying the `games` endpoint fix rebuilt `nfl-backend-api` from current source, which **includes the Phase 6 scoping router**. Revision `nfl-backend-api-00024-kw7`. `GET /api/v1/scoping/capability-gaps` returns 200 in production.
+
+**This bypassed the HC-S6 gate.** TESTING-QA exists precisely to close the "never run against real BigQuery" gap, and the backend is now doing exactly that, unverified by them.
+
+Not an emergency, and there is a silver lining:
+- The endpoints are purely additive; nothing calls them, since the frontend is not deployed.
+- Write paths need approval + dispatch, so nothing can run an experiment by accident.
+- `capability-gaps` returning 200 is the **first live evidence** that the scoping BigQuery read path works against the real `platform.*` tables — the thing S5's in-memory stand-in could not prove.
+
+**HC-S6 still runs, and its brief is unchanged.** It should now additionally verify the deployed revision rather than only a local backend.
+
+## Observability regression in the same deploy
+
+`/health` now reports `"commit":"unknown"`, where it previously reported `fc297ef`. The build did not inject a commit SHA — likely because it was built from a local directory rather than a tagged source.
+
+Worth fixing rather than shrugging at: *"which code is actually running"* is the exact question that took a week to answer during INC-002, when the pipeline image turned out to be four months old. Losing that signal on the API is a step backwards. DEVOPS item.
+ found while verifying — not part of this build
 
 `git status` reports ~300 files as modified. Every one is a permission-bit change (`100644` → `100755`) with a zero-line content diff, left by the OneDrive / machine migration in commit `fc297ef`. `core.filemode` is `true`, so git surfaces all of them.
 

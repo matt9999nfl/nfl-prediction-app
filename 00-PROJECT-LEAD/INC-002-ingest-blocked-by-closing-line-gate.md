@@ -1,6 +1,6 @@
 # INC-002 — 2026 ingest blocked by the closing-line audit gate
 
-**Status:** 🟢 RESOLVED 2026-09-08 — `nfl-pipeline-full` completes 7/7 and `raw_nflfastr.pbp` is fresh. Follow-ups below.
+**Status:** 🟢 CLOSED 2026-09-08 — ingest fixed and verified, alerting fixed and **proven by a real email**. Residual items listed at the end.
 **Found:** 2026-09-07 by PROJECT-LEAD during a season-readiness check
 **Severity:** Critical — no 2026 play-by-play, rosters or curated data is reaching BigQuery
 **Owner of the fix:** DEVOPS (container rebuild + redeploy). Not yet dispatched.
@@ -169,3 +169,40 @@ None of this is wrong — it is the project's own declared IaC finally convergin
 ### Still untested
 
 **No alert email has actually been received.** Configuration that looks correct is precisely what produced this incident. Until a real failure produces a real email in Matt's inbox, alerting is unproven, not fixed.
+
+---
+
+## Alerting proven 2026-09-08 — closing the incident
+
+A deliberate failure of a throwaway `alert-test` job produced:
+
+```
+Policy:  Cloud Run Job — Execution Failed
+Opened:  2026-09-08 17:53:48 +12
+Closed:  2026-09-08 17:55:23 +12
+```
+
+**Email received.** First alert this project has ever delivered. Test job deleted.
+
+### Two failed attempts that were themselves informative
+
+The first two tests used `gcr.io/google-containers/busybox`, which failed on a registry digest mismatch — my error. But the *shape* of that failure matters: the execution died during container import, and the console showed **0 Succeeded, 0 Failed, 0 Running, no tasks**. No task was ever created and no execution ever completed.
+
+The alert watches `completed_execution_count{result="failed"}`. A job that dies before a container starts produces nothing for it to count.
+
+**So the alerting still has a blind spot**, narrower than before but real: it cannot see failures that occur before a container runs — bad image, pull failure, provisioning error, quota. Those are exactly the conditions that look like "nothing happened".
+
+**Recommended follow-up (DEVOPS, not urgent):** a second condition on `resource.type="cloud_run_job"` with `severity=ERROR` in logs, which fires regardless of how far the execution got. Pair it with the P4 freshness check — between them, "the job broke" and "the job silently did nothing" are both covered.
+
+---
+
+## Residual items after close
+
+| # | Item | Owner |
+|---|---|---|
+| 1 | Three commits unpushed (`42336b6`, `557d91e`, `9f45c18`) — needs git on Matt's machine | Matt |
+| 2 | Pre-container-failure alert blind spot (above) | DEVOPS |
+| 3 | P4 data-freshness check — still unbuilt; would have caught INC-002 on 2026-09-01 | DEVOPS |
+| 4 | `/health` reports `commit:"unknown"` since the 2026-09-08 API build | DEVOPS |
+| 5 | Five DATA-PIPELINE files and one DEVOPS file edited by PROJECT-LEAD at Matt's instruction — review, do not inherit silently | DATA-PIPELINE, DEVOPS |
+| 6 | Thursday 2026-09-10 TNF is the first unattended scheduled run | — |

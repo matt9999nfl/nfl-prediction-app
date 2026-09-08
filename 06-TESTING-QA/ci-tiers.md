@@ -139,3 +139,62 @@ API_BASE_URL=https://your-cloud-run-url pytest -m "live" -v
 - Add `@pytest.mark.flaky` for network-dependent tests if needed
 - Add `@pytest.mark.performance` for throughput/latency assertions
 - Add `@pytest.mark.security` for CORS, auth, and input validation tests
+
+---
+
+## HC-S6 — Hypothesis Chat suite (added 2026-09-08, TESTING-QA)
+
+Nine new modules. Tier assignment and the reason for each.
+
+| Module | Tier | Why that tier |
+|---|---|---|
+| `scoping_hc/test_hc_credential_boundary.py` | **1 — Fast** | Pure AST parsing of `03-BACKEND-API/app/scoping/*` and `app/routers/scoping.py`. No network, no storage, ~0.2 s. It is also the check with the shortest fuse: ADR-012 commitment 1 is the one whose breach makes every other guarantee decoration, so it must fail on the push that breaks it, not on the PR. |
+| `scoping_hc/test_hc_approval_attacks.py` | **1 — Fast** | Same — source parsing and pure hash calls. It reads the DML text of `sq.update_answers` and `sq.set_approved_hash`, so a change to either fails immediately. Sub-second. |
+| `scoping_hc/test_hc_render_purity.py` | **2 — PR** | Needs the LIVE feature catalog over HTTPS, which is the point (fixture catalogs are what let the previous render tests pass without exercising a long list or unicode). Network-dependent, ~2 s. |
+| `scoping_hc/test_hc_governor_arithmetic.py` | **2 — PR** | Pages `/api/v1/games` for eleven seasons to build the independent count. ~25 s, entirely network. The finding it carries (F3/F5) is a wrong number shown to the user on a page that will be used to decide whether to run an experiment, so it belongs at the merge gate rather than nightly. |
+| `scoping_hc/test_hc_gap_row_shapes.py` | **2 — PR** | Live catalog + real rule engine + response model. ~1.5 s. |
+| `scoping_hc/test_hc_degradation.py` | **2 — PR** | Fault injection through `TestClient` with a raising BigQuery client. No real storage, but it needs the full app importable (fastapi, google-cloud-*), which is heavier than Tier 1's budget. ~2 s. |
+| `scoping_hc/test_hc_deployed_revision.py` | **3 — Nightly** | Marked `live`. Hits the deployed Cloud Run revision. Should not gate a merge on the availability of a deployed service — but it must run every night, because it is the only thing watching the revision that is already in production ahead of this gate. |
+| `integration/test_hypothesis_chat.py` | **3 — Nightly** | Marked `integration` + `live`. Writes to `platform.scoping_sessions` in the real project and cleans up after itself with a verified post-run count. Nightly because it is the slowest, and because a Tier 2 that writes to production tables on every PR is a bad trade. **Currently skipped at module level for want of GCP credentials — see below.** |
+| `scoping_hc/conftest.py` | n/a | Fixtures. Overrides `bq_client` and `cleanup_test_rows` for that directory only; the override makes `bq_client` FAIL if requested, so nothing under `scoping_hc/` can reach storage by accident. The root fixtures are unchanged. |
+
+### xfail is used deliberately here
+
+Eight tests are `@pytest.mark.xfail(strict=True)`. Each one names a finding in
+its reason string and asserts the behaviour the design promises, which the
+implementation does not currently deliver. `strict=True` means the suite goes
+RED the moment a finding is fixed, forcing whoever fixed it to remove the
+marker and turn the test into a normal guard. A finding that is merely written
+down in a document rots; one that is a strict xfail cannot.
+
+TESTING-QA did not modify any implementation file. The findings are the
+deliverable; the fixes belong to the agents that own the code.
+
+### Running it
+
+```bash
+# Tier 1 — no network, no credentials
+pytest scoping_hc/test_hc_credential_boundary.py scoping_hc/test_hc_approval_attacks.py
+
+# Tier 2 — needs outbound HTTPS to the deployed API
+pytest scoping_hc -m integration
+
+# Tier 3 — needs ADC for nfl-model-471509
+pytest integration/test_hypothesis_chat.py scoping_hc/test_hc_deployed_revision.py
+```
+
+`NFL_BACKEND_ROOT` may be set to the absolute path of `03-BACKEND-API` when
+06-TESTING-QA is checked out or mounted on its own; otherwise the path is
+discovered by walking up from the test file.
+
+### Two gaps in this suite, recorded rather than papered over
+
+1. **`integration/test_hypothesis_chat.py` has never run.** No gcloud, no ADC,
+   no key file in the environment it was written in. It skips at module level
+   with a message saying so. Storage was NOT faked to produce a green run —
+   the whole reason HC-S6 exists is that a stand-in hid a defect, and it did:
+   see FINDING HC-S6-F1.
+2. **Dispatch is not driven end to end.** `trigger_run` fires the production
+   Cloud Run Job `nfl-experiment-runner`, which writes `experiments.*`. That is
+   a kill-switch condition in the HC-S6 brief and the rows cannot be cleaned
+   up. Escalated as HC-S6-Q2.
