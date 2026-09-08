@@ -29,6 +29,14 @@ resource "google_monitoring_alert_policy" "api_5xx" {
         alignment_period  = "60s"
         per_series_aligner = "ALIGN_RATE"
       }
+
+      # INC-002 (2026-09-08): without an explicit trigger, the API defaults it to
+      # zero and the console reports "0% of time series cross threshold" -- the
+      # policy is enabled, looks correct, and can never fire. This omission is
+      # why no alert email was ever received.
+      trigger {
+        count = 1
+      }
     }
   }
 
@@ -51,13 +59,25 @@ resource "google_monitoring_alert_policy" "job_failure" {
 
     condition_threshold {
       filter          = "resource.type=\"cloud_run_job\" AND metric.type=\"run.googleapis.com/job/completed_execution_count\" AND metric.labels.result=\"failed\""
-      duration        = "60s"
+      # INC-002: was "60s". A failed execution is a single counted event, not a
+      # sustained state -- requiring the condition to hold for a full minute can
+      # miss it entirely. Fire on the first occurrence.
+      duration        = "0s"
       comparison      = "COMPARISON_GT"
       threshold_value = 0
-      
+
       aggregations {
         alignment_period  = "60s"
-        per_series_aligner = "ALIGN_RATE"
+        # INC-002: was ALIGN_RATE. A rate over a sparse counter that increments
+        # once per failure can align to a value that never clears the threshold.
+        # ALIGN_DELTA counts the failures in the window, which is the question
+        # being asked: did a job fail?
+        per_series_aligner = "ALIGN_DELTA"
+      }
+
+      # INC-002: the omission that made this policy silent. See the 5xx policy above.
+      trigger {
+        count = 1
       }
     }
   }

@@ -39,7 +39,15 @@ def _game_select() -> str:
     """Standard column list for curated.games → Game schema.
 
     `status` is derived: curated.games has no status column.
-    Games with non-null scores are 'complete'; null scores are 'scheduled'.
+    Games with non-null scores are 'final'; null scores are 'scheduled'.
+
+    NOTE: this emitted 'complete' until 2026-09-08, which is not a member of
+    Game.status (Literal["scheduled", "final"]) — almost certainly copied from
+    the experiment status enum, which does use 'complete'. Every row with a
+    score failed model_validate, so GET /api/v1/games 500'd for any season with
+    completed games. It went unnoticed because the unfiltered list orders by
+    season DESC and, once 2026 fixtures loaded, the first page is all
+    'scheduled'. See tests/test_games.py::test_completed_game_status_is_final.
     """
     return """
         game_id,
@@ -51,7 +59,7 @@ def _game_select() -> str:
         home_score,
         away_score,
         IF(home_score IS NOT NULL AND away_score IS NOT NULL,
-           'complete', 'scheduled')  AS status,
+           'final', 'scheduled')  AS status,
         home_spread_close,
         total_close,
         home_covered,

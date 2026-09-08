@@ -161,3 +161,32 @@ def test_get_game_x_request_id_header(client, mock_bq):
          patch("app.routers.games.gq.get_team_stats", return_value=None):
         resp = client.get("/api/v1/games/2024_01_GB_CHI")
     assert "x-request-id" in resp.headers
+
+
+def test_completed_game_status_is_final():
+    """
+    Regression, 2026-09-08.
+
+    The SQL emitted 'complete' for played games while Game.status is
+    Literal["scheduled", "final"], so every row with a score raised
+    ValidationError and the endpoint 500'd for any completed season. The bug
+    hid because the unfiltered list sorts season DESC — once 2026 fixtures
+    loaded, page one was all 'scheduled' and looked healthy.
+
+    Asserting on the SQL keeps this honest without needing BigQuery: the two
+    literals the query can emit must both be members of the schema's Literal.
+    """
+    import typing
+
+    from app.queries.games import _game_select
+    from app.schemas.games import Game
+
+    allowed = set(typing.get_args(Game.model_fields["status"].annotation))
+    sql = _game_select()
+
+    assert "'final'" in sql, "query must emit 'final' for completed games"
+    assert "'complete'" not in sql, "'complete' is not a valid Game.status"
+    for literal in ("'final'", "'scheduled'"):
+        assert literal.strip("'") in allowed, (
+            f"query emits {literal} which Game.status does not accept: {sorted(allowed)}"
+        )

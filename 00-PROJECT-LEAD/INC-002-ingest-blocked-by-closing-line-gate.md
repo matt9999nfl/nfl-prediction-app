@@ -140,3 +140,32 @@ Gate 2 is the one worth remembering. It would not have announced itself today �
 4. Confirm `curated.games` / `curated.plays` freshness and that 2026 rows appear once week 1 is played.
 5. P4 data-freshness check still unbuilt — it would have caught this on 2026-09-01.
 6. **Role-boundary deviation:** PROJECT-LEAD edited DATA-PIPELINE application code (5 files) at Matt's instruction. DATA-PIPELINE should review rather than inherit silently.
+
+---
+
+## Alerting root cause — found and fixed 2026-09-08
+
+Not the unverified notification channel I suspected. The channel (`matt.lilley4@gmail.com`) exists and is correctly configured, and both policies were enabled the whole time.
+
+**Neither `condition_threshold` in `monitoring.tf` declared a `trigger` block.** Without one the API defaults the trigger to zero, and the console reports *"Triggers when: 0% of time series cross threshold"* — enabled, correct-looking, and structurally incapable of firing. Both policies had it.
+
+This means the earlier explanation was only half the story. `SEASON_AUTOMATION_PLAN` §P4 said the alert stayed silent through the 115-day outage because no Cloud Run execution was ever created — true, but it also would not have fired last week when executions *were* being created and failing daily. **The alerting has never worked, on any policy, since it was built.**
+
+Second defect on the job policy, which would have kept it quiet even with the trigger fixed: `ALIGN_RATE` over `completed_execution_count` with `duration = "60s"`. A failed execution is a single counted event, not a sustained state — a rate over a sparse counter can align to a value that never clears the threshold, and requiring 60s of persistence can miss it outright. Now `ALIGN_DELTA` with `duration = "0s"`.
+
+**Verified live after apply:** the policy reads "Triggers when: Any time series cross threshold", "No retest".
+
+### Unplanned resources in the same apply — review these
+
+The apply was expected to change two alert policies. It reported **7 added, 4 changed**, because the `dataset_processor` infrastructure had been declared in Terraform but never applied — it is the Phase 3 deferred item "Dataset upload background task → Cloud Run Job" (`ROADMAP.md` §Phase 3, "What Didn't Make Phase 3").
+
+Added: `nfl-dataset-processor-sa` service account; `bigquery.dataEditor` on `platform` and `user_datasets`; `bigquery.jobUser`; `storage.objectViewer` on the uploads bucket; the `nfl-dataset-processor` Cloud Run job; and `run.invoker` for the API service account on it.
+Also changed: `nfl-experiment-runner` job and the `nfl-backend-api` service.
+
+None of this is wrong — it is the project's own declared IaC finally converging, and it closes a long-deferred item. But **IAM grants were created that nobody reviewed today**, and the drift between Terraform state and live infrastructure was larger than anyone knew. Worth a deliberate read by DEVOPS.
+
+**API verified healthy after the apply:** `/health` → 200 `{"status":"ok","version":"0.1.0","commit":"fc297ef"}`, and `/api/v1/experiments?status=complete` → 200. Note the deployed commit is `fc297ef` — the API has not been redeployed since, so Phase 6's scoping endpoints are not live yet. That is HC-S7.
+
+### Still untested
+
+**No alert email has actually been received.** Configuration that looks correct is precisely what produced this incident. Until a real failure produces a real email in Matt's inbox, alerting is unproven, not fixed.
