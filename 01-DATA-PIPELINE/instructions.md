@@ -279,6 +279,21 @@ cd /path/to/nfl-prediction-app/01-DATA-PIPELINE
 
 **Read `../00-PROJECT-LEAD/INC-002-ingest-blocked-by-closing-line-gate.md` first.**
 
+### Timing — this is why you are being run today
+
+**Thursday 2026-09-10 is the first unattended scheduled run of the season**, and
+it runs the code you are reviewing. This review is insurance against that run.
+Done afterwards, it happens after the event it was insurance against.
+
+Alerting now works and is proven with a real email, so a job that *fails* will be
+reported. It will not catch a job that succeeds and writes something subtly
+wrong — and the 40,000-row floor in `validate_pbp` is the standing proof that
+this codebase produces exactly that failure mode: it would have failed quietly
+every Sunday until mid-December without announcing itself.
+
+Prioritise accordingly. If you run short of time, the five-file review matters
+more than the migration.
+
 ### Why this exists
 
 On 2026-09-07, with two days to kickoff and the 2026 ingest completely blocked, PROJECT-LEAD edited five files in this folder directly at Matt's explicit instruction. That crosses the delegation boundary in `../00-PROJECT-LEAD/instructions.md`, which says PROJECT-LEAD writes specs and you write code.
@@ -294,6 +309,12 @@ All follow one principle: **the current season warns; completed seasons still er
 3. `scripts/ingest_pbp.py` — zero plays returns `EMPTY` and skips the load
 4. `scripts/build_curated_games.py` — tolerates `EMPTY`, matching `build_curated_plays.py`
 5. `.gcloudignore` — new; keeps 29 MB of staged parquet out of the build context and the production image
+6. `scripts/validate_and_report.py` — new `is_in_progress_season()`; per-season checks become advisory for the live season, recorded as IN-PROGRESS in the report
+
+**Corrected 2026-09-09.** This brief originally listed five files and omitted
+`validate_and_report.py` — PROJECT-LEAD's error, caught by DATA-PIPELINE against
+the commit. It is the fourth gate in `42336b6`'s own message and the one INC-002
+calls "the most likely next failure". Six files.
 
 ### Questions worth answering, not just "does it look right"
 
@@ -301,6 +322,7 @@ All follow one principle: **the current season warns; completed seasons still er
 - `validate_rosters` has no row-count check at all. Should it? It passed only because it never checks.
 - `validate_schedules` keeps a hard 256-row floor. 2026 passed because the full schedule publishes in advance. Is that reliable every year, or is it luck?
 - Is `EMPTY` handled consistently everywhere a status is checked, or are there more call sites with the `build_curated_games` bug?
+- `validate_and_report.is_in_progress_season()` decides which checks are advisory by **substring-matching a season token against a check label**, using the module constant `CURRENT_SEASON`. Two questions, and treat them as separate: can a label match or miss for the wrong reason, and what happens to every per-season check on 1 January when the constant no longer matches any label? Methodology core: never compare system output as a string.
 
 ### Also do
 
@@ -308,17 +330,31 @@ All follow one principle: **the current season warns; completed seasons still er
 
 Requires ADC: `gcloud auth application-default login` is already done on Matt's machine.
 
+**Running it green is not the check.** `CREATE TABLE IF NOT EXISTS` with
+`exists_ok=True` reports success against a table whose schema has drifted from
+the script's `NEW_TABLES` definition, because it does not touch an existing table
+at all. So a clean run proves the script executes — not that the script and
+production agree. **Compare the deployed schema against `NEW_TABLES` field by
+field and report the two results separately.** Drift is the finding available
+here; a green run alone is not evidence of anything.
+
+Note also that `00-PROJECT-LEAD/INC-002-...md` contradicts itself on
+`validate_and_report.py`: line ~98 says it was deliberately NOT loosened and has
+not been audited, while line ~132 lists it under changes made. The doc was not
+updated after the fix landed. Record it — it hands the next reader a false model
+of what is deployed.
+
 ### Scope
 
-In-scope: the five files above, `scripts/migrate_phase6_scoping.py`, and any test you want to add.
+In-scope: the six files above, `.gitignore` (also changed by `42336b6`, +7 lines), `scripts/migrate_phase6_scoping.py`, and any test you want to add.
 Out-of-scope: `../03-BACKEND-API/**`, `../02-MODELING/**`, anything in `platform.*` beyond running the migration.
 
 Kill-switch: if you find a change that is actually wrong and fixing it would re-break the ingest, **stop and escalate** — the season is live and a broken pipeline now is worse than a slightly wrong one.
 
 ### Acceptance
 
-- [ ] Each of the five changes reviewed, with a written verdict: correct / correct-but-narrow / wrong
-- [ ] The four questions above answered
+- [ ] Each of the six changes reviewed, plus `.gitignore`, with a written verdict: correct / correct-but-narrow / wrong
+- [ ] All six questions above answered — the fifth bullet carries two and they are answered separately
 - [ ] `migrate_phase6_scoping.py` run, output recorded, validation passing
 - [ ] Any new defect written up rather than silently fixed, unless it is trivial
 

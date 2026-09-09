@@ -342,7 +342,12 @@ Format: the question, what you were doing when you got stuck, what you tried. Th
 
 ---
 
-## 🔴 CURRENT TASK — HC-S6-FIX: six defects found by TESTING-QA (assigned by PROJECT-LEAD, 2026-09-08)
+## ✅ CLOSED — HC-S6-FIX (2026-09-09) — ACCEPTED, 13/13 acceptance criteria met.
+Return: `../00-PROJECT-LEAD/HC-S6-FIX-HANDOFF.md`. Rulings on your five escalations: `../00-PROJECT-LEAD/HC-S6-FIX-RULINGS.md`. The follow-up task is at the BOTTOM of this file. The brief below is kept for reference only — do not re-run it.
+
+<details>
+<summary>HC-S6-FIX brief (closed)</summary>
+
 
 cd /path/to/nfl-prediction-app/03-BACKEND-API
 
@@ -422,3 +427,136 @@ Kill-switch — stop and escalate:
 - **Proof each guard bites**: revert the fix, show the test failing, restore. A green test that would stay green through a regression is worth nothing here — that is the whole lesson of this task.
 - The before/after `test_hypothesis_chat.py` result
 - Anything in the rulings you think is wrong. They were written by the person who wrote the bugs.
+
+</details>
+
+---
+
+## 🔴 CURRENT TASK — HC-S6-FIX-2: three rulings from your escalations (assigned by PROJECT-LEAD, 2026-09-09)
+
+cd /path/to/nfl-prediction-app/03-BACKEND-API
+
+**Read `../00-PROJECT-LEAD/HC-S6-FIX-RULINGS.md` first.** It accepts HC-S6-FIX and
+rules on all five of your open questions. This task is the three that need code.
+Q4 and Q6 are TESTING-QA's and are dispatched to them.
+
+HC-S6-FIX was accepted, 13/13. Two things in it are now precedent for this repo
+and I want them continued here: a stand-in may not make its own claim about
+production behaviour when it can read it (`_real_update_clears_approved_hash()`),
+and a return that undercuts its own revert table is worth more than a clean one.
+Your note that reverting F1 alone left `test_changing_an_answer_after_approval_blocks_dispatch`
+green is the most useful sentence in the handoff.
+
+### Task 1 — F7: re-approval re-opens the dispatch guard. LIVE DEFECT.
+
+Confirmed in source by PROJECT-LEAD, independently of your escalation. `approve()`
+never reads `status`; `set_approved_hash`'s `WHERE` conditions on `config_hash`,
+which a dispatch does not move. So dispatch → approve → dispatch mints a second
+experiment, fires a second Cloud Run job, and overwrites `session.experiment_id`
+so the first experiment is orphaned from the session that produced it.
+
+**Ruling: both layers.**
+
+1. An `already_dispatched` guard in `approve()` returning 409, mirroring the one
+   in `answer_slot`.
+2. `AND status != 'dispatched'` in `set_approved_hash`'s `WHERE` clause.
+
+The router check alone is not enough and F1 is why: a router-level check over
+permissive SQL is exactly how a guarantee stays broken while the API reports it
+holding. The SQL condition makes the second run impossible rather than
+prohibited, and it is the pattern you established for F10 in the same function.
+
+`answer_slot` already refuses to change answers after dispatch, so there is no
+legitimate approval after dispatch and the condition cannot block real work.
+
+Two TESTING-QA assertions flip. Expected and correct — TESTING-QA is fixing them
+in a parallel brief. Do not edit their files.
+
+### Task 2 — F4: use the right constant, not a real count.
+
+**Ruling: none of your three options.** 2015–2020 were 16-game seasons (256),
+2021 onward 17-game (272). That is static history, not a BigQuery read. A
+per-season lookup is exact everywhere except the cancelled 2022 game.
+
+I am declining the real-count option on price, not principle: it puts a BigQuery
+read behind a number that is currently pure arithmetic, and under the F6 ruling
+you just implemented a read that fails must then raise a concern. Materially more
+fragile `/review`, bought for 1.8% and one game.
+
+Keep `GAMES_PER_SEASON` as the fallback for seasons outside the table, so a
+future season needs no code change to be counted — only to be counted exactly.
+
+### Task 3 — Q5(b): the brief prints the hash that is actually approved.
+
+**PRECONDITION — do not start this task until Matt has confirmed the count is 0:**
+
+```sql
+SELECT COUNT(*) FROM `nfl-model-471509.platform.scoping_sessions`
+WHERE approved_hash IS NOT NULL;
+```
+
+If he has not confirmed it, or it is non-zero, **do tasks 1 and 2 and escalate
+this one.** A non-zero count means real approvals exist and (b) invalidates them,
+which voids the ruling and returns it to me.
+
+**Ruling: (b), as you argued for it.** (a) leaves a document whose closing
+paragraph promises that if any answer changes the printed hash changes, which is
+false for the three record-only slots. A document that misdescribes its own
+guarantee is the lying fake one layer up.
+
+Per your own description of the change: `render()` prints the approval hash in
+its final section, `ApproveRequest.approval_hash` becomes required, the
+config-only comparison is dropped.
+
+**And rename it — `approval_hash` throughout the schemas.** I initially ruled to
+keep `config_hash` as the wire name and I was wrong. It does not force a frontend
+change *before* HC-S7; `src/api/scoping.ts` is edited *as part of* HC-S7, which
+has not shipped. And a field named `config_hash` carrying a hash that covers
+config **and** record-only answers is a name that lies about its contents — a
+fourth instance of the archetype these rulings exist to close. `config_hash`
+survives as the internal staleness check only.
+
+Reword the brief's closing paragraph so it describes what the document now does.
+
+### Scope
+
+In-scope: `app/scoping/**`, `app/queries/scoping.py`, `app/routers/scoping.py`,
+`app/schemas/scoping.py`, `tests/test_scoping_*.py`.
+
+Out-of-scope: `../06-TESTING-QA/**` — two of their assertions flip as a result of
+task 1 and one test breaks on the task 3 rename; all three are in their own
+brief. Escalate, do not edit. `../02-MODELING/**`. `../04-FRONTEND/**` — the
+rename lands in HC-S7. Any endpoint outside `/scoping`.
+
+Kill-switch — stop and escalate:
+- The Q5 precondition is unconfirmed or non-zero (do tasks 1 and 2, escalate 3).
+- Task 1's SQL condition would block a legitimate approval you can construct.
+- A TESTING-QA test appears wrong beyond the three named above.
+- Over 2 hours.
+
+### Acceptance
+
+- [ ] `approve()` returns 409 `already_dispatched` on a dispatched session
+- [ ] `set_approved_hash`'s `WHERE` includes `status != 'dispatched'`
+- [ ] dispatch → approve → dispatch produces exactly one experiment, asserted by row count
+- [ ] `session.experiment_id` cannot be overwritten by a second dispatch
+- [ ] `evaluated_games` returns 256/season for 2015–2020 and 272 for 2021+
+- [ ] A season outside the table falls back to `GAMES_PER_SEASON` — asserted
+- [ ] The governor/runner fold agreement test from HC-S6-FIX still passes unchanged
+- [ ] `render()` prints the approval hash; changing only the falsifier changes the printed hash
+- [ ] `ApproveRequest.approval_hash` is required; the config-only comparison is gone
+- [ ] The brief's closing paragraph is true as written
+- [ ] All HC-S6-FIX tests still pass
+- [ ] No file outside the in-scope list modified
+
+### Returns-with
+
+- Which acceptance criteria are met, and any that are not
+- **Proof each guard bites**: revert, show the test failing, restore. Same standard as HC-S6-FIX — and if a revert does *not* turn a test red where you expected it to, say so, as you did for F1. That note was worth more than the table it qualified.
+- Confirmation of what the Q5 precondition returned and who confirmed it
+- Anything in these rulings you think is wrong
+
+### Escalation
+
+`../00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md`. The question, what you were
+doing, what you tried. Then exit.

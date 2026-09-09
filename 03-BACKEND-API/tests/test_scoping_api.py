@@ -5,8 +5,28 @@ BigQuery is replaced with an in-memory store and the experiment write path with
 a recorder, so a whole session runs without GCP.  What is being tested is the
 guarantee itself: an experiment cannot start unless the exact config that will
 run is the one that was approved.
+
+WHY THE STORE BELOW READS THE REAL SQL
+--------------------------------------
+FINDING HC-S6-F1.  This stand-in used to clear `approved_hash` in its
+`update_answers` while the real UPDATE in app/queries/scoping.py never touched
+the column.  `test_changing_an_answer_after_approval_blocks_dispatch` passed on
+the strength of that difference — the one test guarding the feature's core
+guarantee was green because the fake was kinder than production, while the
+guarantee itself was broken in the live service.
+
+Fixing the SQL alone would leave the fake making its own independent claim, and
+the test would stay green through a regression.  So the fake no longer claims
+anything: `_real_update_clears_approved_hash()` reads the SET clause of the
+actual statement, and the stand-in behaves the way that statement behaves.
+Revert the SQL and this file goes red.
+
+The rule this encodes: a fake may only be as kind as the thing it stands in for.
 """
 from __future__ import annotations
+
+import ast
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,8 +41,59 @@ from app.scoping.schema import load_tree
 CATALOG = [{"dataset": "curated", "column": "fixture_alpha", "semantic_name": "Fixture Alpha"}]
 
 
+# Read from the FILE, not from the module attribute: the `store` fixture below
+# monkeypatches these names onto app.queries.scoping, so anything reading the
+# attribute at test time would end up reading this fake's own source and
+# confirming itself.
+_QUERIES_SRC = Path(sq.__file__).read_text(encoding="utf-8")
+
+
+def _sql_of(function_name: str) -> str:
+    """
+    The statement a query function issues — not its docstring, and not its
+    parameter names, either of which can mention a column the SQL does not
+    touch. The table name is interpolated, so the statement is an f-string and
+    its literal parts are stitched back together.
+    """
+    for node in ast.walk(ast.parse(_QUERIES_SRC)):
+        if not (isinstance(node, ast.FunctionDef) and node.name == function_name):
+            continue
+        statements = []
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                statements.append(child.value)
+            elif isinstance(child, ast.JoinedStr):
+                statements.append("".join(
+                    part.value if isinstance(part, ast.Constant) else "?"
+                    for part in child.values
+                ))
+        found = [t for t in statements
+                 if t.strip().upper().startswith(("UPDATE ", "INSERT ", "SELECT "))]
+        assert found, f"{function_name} issues no statement"
+        return max(found, key=len)
+    raise AssertionError(f"app/queries/scoping.py has no function {function_name!r}")
+
+
+def _real_update_clears_approved_hash() -> bool:
+    """Does the statement app/queries/scoping.py actually issues clear it?"""
+    sql = _sql_of("update_answers")
+    set_clause = sql[sql.upper().index("SET"):sql.upper().index("WHERE")]
+    return "approved_hash" in set_clause
+
+
+def _real_approval_is_conditional() -> bool:
+    """Does set_approved_hash condition its write on the config hash?"""
+    sql = _sql_of("set_approved_hash")
+    return "config_hash" in sql[sql.upper().index("WHERE"):]
+
+
 class Store:
-    """Minimal stand-in for platform.scoping_sessions."""
+    """
+    Minimal stand-in for platform.scoping_sessions.
+
+    Every behaviour that the approval guarantee rests on is read from the real
+    SQL rather than restated here.  See the module docstring.
+    """
 
     def __init__(self) -> None:
         self.rows: dict[str, dict] = {}
@@ -41,11 +112,17 @@ class Store:
     def update_answers(self, _c, session_id, slot_answers, config, config_hash, status):
         self.rows[session_id].update(
             slot_answers=slot_answers, config=config, config_hash=config_hash,
-            status=status, approved_hash=None,
+            status=status,
         )
+        if _real_update_clears_approved_hash():
+            self.rows[session_id].update(approved_hash=None)
 
-    def set_approved_hash(self, _c, session_id, approved_hash):
+    def set_approved_hash(self, _c, session_id, approved_hash, expected_config_hash=None):
+        expected = expected_config_hash if expected_config_hash is not None else approved_hash
+        if _real_approval_is_conditional() and self.rows[session_id].get("config_hash") != expected:
+            return False       # zero rows changed: the condition matched nothing
         self.rows[session_id].update(approved_hash=approved_hash, status="approved")
+        return True
 
     def mark_dispatched(self, _c, session_id, experiment_id):
         self.rows[session_id].update(status="dispatched", experiment_id=experiment_id)

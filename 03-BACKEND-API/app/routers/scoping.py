@@ -16,7 +16,7 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from google.cloud import bigquery
 
 from app.claude_scoping import ClaudeScopingError, extract_slots
@@ -33,6 +33,7 @@ from app.schemas.scoping import (
     ApproveRequest as _ApproveRequest,  # noqa: F401  (kept for clarity in signatures)
     BriefResponse,
     CapabilityGapListResponse,
+    DispatchDryRunResponse,
     DispatchResponse,
     ExtractResponse,
     PrefillOut,
@@ -45,7 +46,7 @@ from app.scoping import session as sm
 from app.scoping.assemble import IncompleteScopingError, missing_required
 from app.scoping import governor
 from app.scoping.gaps import detect_gaps
-from app.scoping.hashing import config_hash
+from app.scoping.hashing import approval_hash, config_hash
 from app.scoping.render import render
 from app.scoping.schema import load_tree
 
@@ -125,13 +126,22 @@ def start_session(
 
 
 @router.get("/sessions/{session_id}", response_model=SessionStateResponse,
-            responses={404: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
+            responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
+                       502: {"model": ErrorResponse}},
             summary="Current state of a scoping session")
 def get_session_state(
     session_id: str,
     request_id: Annotated[str, Depends(get_request_id)],
     bq: Annotated[bigquery.Client, Depends(get_bq_client)],
+    _: Annotated[None, Depends(require_api_key)],
 ) -> SessionStateResponse:
+    """
+    Requires the API key.  A session carries the hypothesis, every answer and
+    the assembled config — unpublished research thinking, readable by anyone
+    holding the uuid while this was open.  The project's open-read convention
+    exists for the public predictions surface, which is data meant to be shown;
+    this is not that.  PROJECT-LEAD ruling HC-S6 Q3.
+    """
     return _state(_load_or_404(bq, session_id, request_id))
 
 
@@ -185,21 +195,26 @@ def answer_slot(
         logger.error("[%s] BigQuery error saving answers for %s: %s", request_id, session_id, exc, exc_info=True)
         raise _err(502, "Upstream query failed", "upstream_error", request_id)
 
-    row.update({"slot_answers": answers, "config": payload, "config_hash": chash,
-                "status": status, "approved_hash": None})
-    return _state(row)
+    # Re-read rather than patch the row in memory.  FINDING HC-S6-F1: this used
+    # to assign approved_hash=None to the response dict while the UPDATE left
+    # the column alone, so the API reported a cleared approval that storage
+    # still held.  The response now says what the row says, and if the two ever
+    # disagree again the endpoint reports the disagreement instead of hiding it.
+    return _state(_load_or_404(bq, session_id, request_id))
 
 
 # ── GET /api/v1/scoping/sessions/{id}/brief ──────────────────────────────────
 
 
 @router.get("/sessions/{session_id}/brief", response_model=BriefResponse,
-            responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+            responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
+                       409: {"model": ErrorResponse}},
             summary="The brief, rendered from the exact config that will run")
 def get_brief(
     session_id: str,
     request_id: Annotated[str, Depends(get_request_id)],
     bq: Annotated[bigquery.Client, Depends(get_bq_client)],
+    _: Annotated[None, Depends(require_api_key)],
 ) -> BriefResponse:
     row = _load_or_404(bq, session_id, request_id)
     tree = load_tree()
@@ -213,6 +228,7 @@ def get_brief(
     return BriefResponse(
         session_id=session_id,
         config_hash=config_hash(payload),
+        approval_hash=approval_hash(payload, record_only),
         brief_markdown=render(
             payload,
             hypothesis_text=row["hypothesis_text"],
@@ -239,7 +255,7 @@ def approve(
     tree = load_tree()
 
     try:
-        payload, _ro = sm.build(tree, row.get("slot_answers") or {})
+        payload, record_only = sm.build(tree, row.get("slot_answers") or {})
     except IncompleteScopingError as exc:
         raise _err(409, str(exc), "incomplete_scoping", request_id)
 
@@ -254,32 +270,78 @@ def approve(
             request_id,
         )
 
+    # What gets STORED covers everything render() puts in the brief: the config
+    # and the record-only answers.  FINDING HC-S6-F2 — the config hash alone
+    # left mechanism, falsifier and prior_attempts free to change after
+    # approval without moving it, so dispatch could proceed against a document
+    # nobody signed off.  ADR-012 commitment 3: the approved artefact and the
+    # executed artefact cannot differ.
+    approved = approval_hash(payload, record_only)
+    if body.approval_hash is not None and body.approval_hash != approved:
+        # The client read a brief whose record-only half has since changed —
+        # the falsifier, say. config_hash cannot see that, which is the window
+        # HC-S6-FIX-Q5 describes. A client that sends the brief's approval_hash
+        # closes it here rather than discovering it at dispatch.
+        raise _err(
+            409,
+            "The brief you approved is out of date — an answer changed since it "
+            "was rendered. Re-read the brief and approve again.",
+            "stale_brief",
+            request_id,
+        )
+
     try:
-        sq.set_approved_hash(bq, session_id, actual)
+        written = sq.set_approved_hash(bq, session_id, approved, expected_config_hash=actual)
     except Exception as exc:
         logger.error("[%s] BigQuery error approving %s: %s", request_id, session_id, exc, exc_info=True)
         raise _err(502, "Upstream query failed", "upstream_error", request_id)
 
-    row.update({"approved_hash": actual, "config_hash": actual,
-                "config": payload, "status": "approved"})
-    return _state(row)
+    if written is False:
+        # FINDING HC-S6-F10.  The conditional write matched no row, so an answer
+        # landed between the load above and the write.  Saying so beats
+        # attaching an approval to answers it was not computed from and leaving
+        # dispatch to refuse it later with nothing to explain why.
+        raise _err(
+            409,
+            "An answer changed while this approval was being recorded, so it was "
+            "not applied. Re-read the brief and approve again.",
+            "approval_conflict",
+            request_id,
+        )
+
+    return _state(_load_or_404(bq, session_id, request_id))
 
 
 # ── POST /api/v1/scoping/sessions/{id}/dispatch ──────────────────────────────
 
 
-@router.post("/sessions/{session_id}/dispatch", response_model=DispatchResponse,
+@router.post("/sessions/{session_id}/dispatch", response_model=None,
              status_code=202,
-             responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse},
-                        502: {"model": ErrorResponse}},
+             responses={200: {"model": DispatchDryRunResponse},
+                        202: {"model": DispatchResponse},
+                        401: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
+                        409: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
              summary="Create the experiment and start the run")
 def dispatch(
     session_id: str,
     request: Request,
+    response: Response,
     request_id: Annotated[str, Depends(get_request_id)],
     bq: Annotated[bigquery.Client, Depends(get_bq_client)],
     _: Annotated[None, Depends(require_api_key)],
-) -> DispatchResponse:
+    dry_run: bool = False,
+) -> DispatchResponse | DispatchDryRunResponse:
+    """
+    `?dry_run=true` runs every check below and then stops, returning the exact
+    payload it would have sent to create_experiment.  It creates no experiment,
+    fires no runner job, and writes nothing — 200 rather than 202, because
+    nothing was accepted for processing.
+
+    Ruled in HC-S6 Q2: without it, the most consequential path in the feature
+    could only be exercised by minting a real experiment and firing the
+    production runner, so it was never exercised at all.  A guarantee that
+    cannot be rehearsed is a guarantee nobody has checked.
+    """
     row = _load_or_404(bq, session_id, request_id)
 
     if row["status"] == "dispatched":
@@ -287,27 +349,42 @@ def dispatch(
 
     tree = load_tree()
     try:
-        payload, _ro = sm.build(tree, row.get("slot_answers") or {})
+        payload, record_only = sm.build(tree, row.get("slot_answers") or {})
     except IncompleteScopingError as exc:
         raise _err(409, str(exc), "incomplete_scoping", request_id)
 
     # THE GUARANTEE.  Recomputed from the answers as they are right now, and
     # compared against what was approved.  Not read from config_hash — a stored
     # value could have been written by anything.
+    #
+    # The comparison is against the hash of the WHOLE brief (config plus the
+    # record-only answers), because that is the document that was approved.
+    # FINDING HC-S6-F2.
     actual = config_hash(payload)
+    recomputed = approval_hash(payload, record_only)
     approved = row.get("approved_hash")
     if not approved:
         raise _err(409, "This experiment has not been approved", "not_approved", request_id)
-    if approved != actual:
+    if approved != recomputed:
         raise _err(
             409,
-            "The config changed after approval and will not be run. Re-read the "
+            "The brief changed after approval and will not be run. Re-read the "
             "brief and approve the current version.",
             "approval_mismatch",
             request_id,
         )
 
     body = ExperimentCreateRequest.model_validate(payload)
+
+    if dry_run:
+        logger.info("[%s] Dry-run dispatch for session %s passed every check", request_id, session_id)
+        response.status_code = 200
+        return DispatchDryRunResponse(
+            session_id=session_id,
+            config_hash=actual,
+            approved_hash=approved,
+            would_create=body.model_dump(mode="json"),
+        )
 
     # Same handlers the wizard uses — not a parallel write path.
     created = create_experiment(
@@ -337,12 +414,14 @@ def dispatch(
 
 
 @router.get("/sessions/{session_id}/review", response_model=ReviewResponse,
-            responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+            responses={401: {"model": ErrorResponse}, 404: {"model": ErrorResponse},
+                       409: {"model": ErrorResponse}},
             summary="Whether this experiment is worth running (advisory)")
 def review_session(
     session_id: str,
     request_id: Annotated[str, Depends(get_request_id)],
     bq: Annotated[bigquery.Client, Depends(get_bq_client)],
+    _: Annotated[None, Depends(require_api_key)],
 ) -> ReviewResponse:
     """
     The governance layer. Every check behind it is deterministic — sample size,
@@ -362,7 +441,14 @@ def review_session(
 
     methodology = config.get("methodology") or {}
 
-    # Real counts where they can be had; the checks degrade rather than fail.
+    # Real counts where they can be had.  An input that cannot be loaded is
+    # recorded by name and reported — FINDING HC-S6-F6.  This used to log a
+    # warning and carry on with fraction=None and priors=[], which returns a
+    # 200 with an empty concern list: the same shape as a healthy review of a
+    # sound experiment, having checked nothing, and degrading toward a LARGER
+    # apparent sample. A check that could not run is not a check that passed.
+    unavailable: dict[str, str] = {}
+
     fraction = None
     try:
         fraction = sq.slice_fraction(
@@ -372,13 +458,15 @@ def review_session(
             game_universe=methodology.get("game_universe"),
         )
     except Exception as exc:
-        logger.warning("[%s] Could not count slice for %s: %s", request_id, session_id, exc)
+        logger.error("[%s] Could not count slice for %s: %s", request_id, session_id, exc, exc_info=True)
+        unavailable["slice_fraction"] = str(exc) or exc.__class__.__name__
 
     priors: list = []
     try:
         priors = sq.list_prior_configs(bq)
     except Exception as exc:
-        logger.warning("[%s] Could not load prior configs for %s: %s", request_id, session_id, exc)
+        logger.error("[%s] Could not load prior configs for %s: %s", request_id, session_id, exc, exc_info=True)
+        unavailable["prior_configs"] = str(exc) or exc.__class__.__name__
 
     result = governor.review(
         config,
@@ -386,6 +474,7 @@ def review_session(
         prior_configs=priors,
         slice_fraction=fraction,
         current_season=settings_current_season(),
+        unavailable_inputs=unavailable,
     )
 
     return ReviewResponse(
@@ -394,6 +483,8 @@ def review_session(
         concerns=result["concerns"],
         evaluated_games=governor.evaluated_games(methodology),
         slice_fraction=fraction,
+        checks_unavailable=sorted(unavailable),
+        degraded=bool(unavailable),
     )
 
 
@@ -489,7 +580,12 @@ def extract(
         filterable_fields=_filterable_fields(),
     )
 
+    # A gap that cannot be written is still reported.  FINDING HC-S6-F8: the
+    # failed insert used to be logged and skipped, so "the write failed" and
+    # "there are no gaps" reached the caller as the same answer — and the gap
+    # record is the whole deliverable of the stop-at-the-wall design.
     persisted = []
+    failed_gaps = []
     for gap in gap_rows:
         gap_id = str(uuid.uuid4())
         try:
@@ -501,28 +597,46 @@ def extract(
                 suggested_definition=gap["suggested_definition"],
             )
         except Exception as exc:
-            logger.error("[%s] Failed to record capability gap: %s", request_id, exc, exc_info=True)
-            continue
-        persisted.append({**gap, "gap_id": gap_id, "session_id": session_id, "status": "open"})
+            logger.error("[%s] Failed to record capability gap %s for session %s: %s",
+                         request_id, gap_id, session_id, exc, exc_info=True)
+            failed_gaps.append({**gap, "gap_id": gap_id, "session_id": session_id,
+                                "status": "not_recorded"})
+        else:
+            persisted.append({**gap, "gap_id": gap_id, "session_id": session_id,
+                              "status": "open"})
 
     if persisted:
         logger.info("[%s] Session %s recorded %d capability gap(s)",
                     request_id, session_id, len(persisted))
 
-    return ExtractResponse(session_id=session_id, prefills=prefills, gaps=persisted)
+    detail = None
+    if failed_gaps:
+        detail = (
+            f"{len(failed_gaps)} capability gap(s) could not be written to "
+            f"platform.capability_gaps and are returned in gaps_not_recorded. "
+            f"They are NOT stored — nothing will surface them later."
+        )
+
+    return ExtractResponse(session_id=session_id, prefills=prefills, gaps=persisted,
+                           gaps_not_recorded=failed_gaps, detail=detail)
 
 
 # ── GET /api/v1/scoping/capability-gaps ──────────────────────────────────────
 
 
 @router.get("/capability-gaps", response_model=CapabilityGapListResponse,
-            responses={502: {"model": ErrorResponse}},
+            responses={401: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
             summary="Things the platform could not express")
 def list_capability_gaps(
     request_id: Annotated[str, Depends(get_request_id)],
     bq: Annotated[bigquery.Client, Depends(get_bq_client)],
+    _: Annotated[None, Depends(require_api_key)],
     status: str | None = None,
 ) -> CapabilityGapListResponse:
+    """
+    Requires the API key.  The gap list is a readable index of what the platform
+    cannot yet express — PROJECT-LEAD ruling HC-S6 Q3.
+    """
     try:
         rows = sq.list_gaps(bq, status)
     except Exception as exc:

@@ -223,8 +223,14 @@ class Store:
         self.rows[session_id].update(slot_answers=slot_answers, config=config,
                                      config_hash=config_hash, status=status, approved_hash=None)
 
-    def set_approved_hash(self, _c, session_id, approved_hash):
+    def set_approved_hash(self, _c, session_id, approved_hash, expected_config_hash=None):
+        # Mirrors the conditional write in app/queries/scoping.py (HC-S6-F10):
+        # an approval only lands on the answers it was computed from.
+        expected = expected_config_hash if expected_config_hash is not None else approved_hash
+        if self.rows[session_id].get("config_hash") != expected:
+            return False
         self.rows[session_id].update(approved_hash=approved_hash, status="approved")
+        return True
 
     def mark_dispatched(self, _c, session_id, experiment_id):
         self.rows[session_id].update(status="dispatched", experiment_id=experiment_id)

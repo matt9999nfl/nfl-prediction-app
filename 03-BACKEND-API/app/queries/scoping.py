@@ -31,6 +31,31 @@ def _run(client: bigquery.Client, query: str, params: list) -> list[dict[str, An
     return [dict(r) for r in rows]
 
 
+UNKNOWN_ROW_COUNT = -1
+
+
+def _run_dml(client: bigquery.Client, query: str, params: list) -> int:
+    """
+    Run a DML statement and report how many rows it changed.
+
+    The row count is what makes a conditional write meaningful: zero rows means
+    the WHERE clause did not match, which is how a caller learns it lost a race
+    rather than silently believing it won.
+
+    Returns UNKNOWN_ROW_COUNT when the client does not report a count (a test
+    double, or a client version without the attribute).  Callers must treat
+    that as "cannot tell", never as zero — refusing a write nobody can prove
+    failed would be its own silent failure.
+    """
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    job = client.query(query, job_config=job_config)
+    job.result()
+    affected = getattr(job, "num_dml_affected_rows", None)
+    if isinstance(affected, bool) or not isinstance(affected, int):
+        return UNKNOWN_ROW_COUNT
+    return affected
+
+
 def _parse_json(value: Any) -> Any:
     """BigQuery JSON columns come back as str on some client versions, dict on others."""
     if value is None or isinstance(value, (dict, list)):
@@ -97,16 +122,27 @@ def update_answers(
 
     Writing config and hash together is deliberate — a stored hash that does not
     match the stored config would break the approval guarantee silently.
+
+    `approved_hash` is cleared here, in the same statement.  FINDING HC-S6-F1:
+    it was not, and the router assigned None to the response dict instead, so
+    the API reported an approval as cleared while the row still held it.  The
+    stored row is what dispatch compares against, so the clearing has to happen
+    in the storage layer or it has not happened at all.
+
+    An answer change invalidates approval unconditionally — including a change
+    to a record-only answer, which leaves the config hash still and would
+    otherwise leave a live approval attached to a brief nobody read.
     """
     _run(
         client,
         f"""
         UPDATE `{SESSIONS}`
-        SET slot_answers = PARSE_JSON(@slot_answers),
-            config       = CASE WHEN @config IS NULL THEN NULL ELSE PARSE_JSON(@config) END,
-            config_hash  = @config_hash,
-            status       = @status,
-            updated_at   = CURRENT_TIMESTAMP()
+        SET slot_answers  = PARSE_JSON(@slot_answers),
+            config        = CASE WHEN @config IS NULL THEN NULL ELSE PARSE_JSON(@config) END,
+            config_hash   = @config_hash,
+            approved_hash = NULL,
+            status        = @status,
+            updated_at    = CURRENT_TIMESTAMP()
         WHERE session_id = @session_id
         """,
         [
@@ -121,20 +157,48 @@ def update_answers(
     )
 
 
-def set_approved_hash(client: bigquery.Client, session_id: str, approved_hash: str) -> None:
-    _run(
+def set_approved_hash(
+    client: bigquery.Client,
+    session_id: str,
+    approved_hash: str,
+    expected_config_hash: Optional[str] = None,
+) -> bool:
+    """
+    Attach an approval, but only to the answers it was computed from.
+
+    Returns True if the approval landed, False if it lost a race.
+
+    FINDING HC-S6-F10: both this and update_answers read, decided, then wrote
+    unconditionally.  Two callers interleaving left an approval attached to
+    answers it was never computed from; dispatch then refused, correctly, with
+    nothing to explain why and no way out but re-approving.
+
+    So the write carries the config hash it believes it is approving.  If an
+    answer landed in between, the stored config_hash has moved, the condition
+    matches nothing, and the caller gets a 409 saying exactly that instead of a
+    wedged session.
+
+    `expected_config_hash` defaults to `approved_hash` for callers that approve
+    the config hash itself.  The router passes it explicitly, because the value
+    it approves covers the record-only answers too and is deliberately not the
+    same number.
+    """
+    expected = expected_config_hash if expected_config_hash is not None else approved_hash
+    affected = _run_dml(
         client,
         f"""
         UPDATE `{SESSIONS}`
         SET approved_hash = @approved_hash, status = 'approved',
             updated_at = CURRENT_TIMESTAMP()
-        WHERE session_id = @session_id
+        WHERE session_id = @session_id AND config_hash = @expected_config_hash
         """,
         [
             bigquery.ScalarQueryParameter("session_id", "STRING", session_id),
             bigquery.ScalarQueryParameter("approved_hash", "STRING", approved_hash),
+            bigquery.ScalarQueryParameter("expected_config_hash", "STRING", expected),
         ],
     )
+    return affected != 0
 
 
 def mark_dispatched(client: bigquery.Client, session_id: str, experiment_id: str) -> None:

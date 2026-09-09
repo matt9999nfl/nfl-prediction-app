@@ -1,9 +1,37 @@
+# Ad-hoc / manual build path.
+#
+# The GitHub Actions workflow (.github/workflows/api-deploy.yml) is the primary
+# deploy path and passes --build-arg GIT_COMMIT itself.  This file exists for
+# `gcloud builds submit` and for any Cloud Build trigger.
+#
+# GIT_COMMIT must be passed here too.  Without it the Dockerfile's
+# `ARG GIT_COMMIT=unknown` default is baked into the image and /health reports
+# "unknown" — which is what happened to the 2026-09-08 rebuild and is why
+# "which code is actually running?" took a week to answer during INC-002.
+#
+# Cloud Build populates $SHORT_SHA only for trigger-based builds.  For a manual
+# `gcloud builds submit`, pass it explicitly:
+#
+#   gcloud builds submit --substitutions=_GIT_COMMIT=$(git rev-parse --short HEAD)
+
+substitutions:
+  _GIT_COMMIT: unknown
+
+options:
+  substitution_option: ALLOW_LOOSE
+
 steps:
-- name: gcr.io/cloud-builders/docker
-  args:
-  - build
-  - -t
-  - gcr.io/nfl-model-471509/nfl-backend-api:latest
-  - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - GIT_COMMIT=${_GIT_COMMIT}
+      - -t
+      - gcr.io/nfl-model-471509/nfl-backend-api:${_GIT_COMMIT}
+      - -t
+      - gcr.io/nfl-model-471509/nfl-backend-api:latest
+      - .
+
 images:
-- gcr.io/nfl-model-471509/nfl-backend-api:latest
+  - gcr.io/nfl-model-471509/nfl-backend-api:${_GIT_COMMIT}
+  - gcr.io/nfl-model-471509/nfl-backend-api:latest

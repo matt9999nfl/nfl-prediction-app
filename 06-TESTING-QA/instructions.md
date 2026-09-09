@@ -233,3 +233,150 @@ Assert structurally that nothing under `app/scoping/` constructs a BigQuery clie
 - Your own judgement, in prose: do the three guarantees hold? Where is this feature weakest? You have read it cold, which nobody else in this phase has.
 
 </details>
+
+---
+
+## 🔴 CURRENT TASK — HC-S6-CLEANUP: dispose of the assertions HC-S6-FIX closed (assigned by PROJECT-LEAD, 2026-09-09)
+
+cd /path/to/nfl-prediction-app/06-TESTING-QA
+
+**PRECONDITION — do not start until BACKEND-API has returned HC-S6-FIX-2.**
+That task changes `approve()`, `set_approved_hash`'s `WHERE` clause, and renames
+`ApproveRequest.config_hash` to `approval_hash`. Starting before it lands means
+rewriting assertions against code that is about to move again, and it costs you
+two sessions instead of one. **Do not start unprompted.**
+
+**Read `../00-PROJECT-LEAD/HC-S6-FIX-RULINGS.md` first.** It accepts HC-S6-FIX
+and rules on the five escalations. Two of them are yours.
+
+Your HC-S6 return was the reason any of this was found. Six of the eight tests
+below are red *because your findings closed*, which is the mechanism working.
+This task is disposal, not repair.
+
+### Task 1 — six markers on closed findings
+
+Strict-xfail going XPASS is a finding closing. Remove the markers, keep the tests
+as regression guards.
+
+| Test | File | Finding |
+|---|---|---|
+| `test_attack_answer_after_approval_leaves_a_stored_approval_behind` | `scoping_hc/test_hc_approval_attacks.py` | F1 |
+| `test_the_in_memory_stand_in_clears_what_the_real_sql_does_not` | `scoping_hc/test_hc_approval_attacks.py` | F1 |
+| `test_review_hides_a_bigquery_outage_behind_a_normal_looking_verdict` | `scoping_hc/test_hc_degradation.py` | F6 |
+| `test_a_gap_that_fails_to_persist_is_still_reported_to_the_user` | `scoping_hc/test_hc_degradation.py` | F8 |
+| `test_the_governor_is_not_silent_on_a_design_that_misses_its_own_minimum` | `scoping_hc/test_hc_governor_arithmetic.py` | F5 |
+| `test_evaluated_games_never_exceeds_the_games_that_exist_in_the_window` | `scoping_hc/test_hc_governor_arithmetic.py` | F3 |
+
+`test_the_in_memory_stand_in_clears_what_the_real_sql_does_not` needs more than a
+marker removal — it asserts the real `UPDATE` does *not* touch `approved_hash`,
+and it now does. Invert it, and point its comment at the mechanism BACKEND-API
+built: `tests/test_scoping_api.py::Store` now reads the `SET` clause out of
+`../03-BACKEND-API/app/queries/scoping.py` by AST rather than claiming anything about it. That is
+the precedent for every stand-in in this repo and your test should name it.
+
+### Task 2 — Q4: two tests encode a design claim that has been deleted
+
+**Ruling: option 1, as you would expect, but the scope is two tests, not one.**
+
+| Test | File |
+|---|---|
+| `test_json_columns_round_trip_nested_arrays_and_explicit_nulls` | `integration/test_hypothesis_chat.py` |
+| `test_attack_500_vs_500_point_0_to_collide_two_configs` | `scoping_hc/test_hc_approval_attacks.py` |
+
+Both assert that `2.0` must not come back as `2` — the claim the F9 ruling
+deletes. Neither can go green from the backend side; BigQuery's JSON type has
+discarded the distinction before the value reaches the client.
+
+**Rewrite both to assert the inverse:** that the int/float distinction is
+deliberately not preserved, and that the collision is harmless **because Pydantic
+validates `500` and `500.0` into the same `ExperimentConfig`, so two configs that
+hash alike also run alike.** That last clause is the entire reason this is not a
+security hole, and it must be in the test, not only in the ruling.
+
+Not an `xfail`. A marker pinning an overruled design claim is a trap — the next
+reader takes it for a known bug and "fixes" it. Same shape as HC-S5's always-null
+fields, and as the fake that behaved better than production.
+
+Your assertion was a correct probe and it did its job: it is how F9 was found. It
+is only as a standing specification that it now pins something overruled.
+
+### Task 3 — Q6: your `RecordingStore` has the old signature
+
+`scoping_hc/test_hc_degradation.py::RecordingStore.set_approved_hash` takes three
+arguments; F10 added a fourth. One line, your file, your call to make:
+
+```python
+-    def set_approved_hash(self, _c, session_id, approved_hash):
++    def set_approved_hash(self, _c, session_id, approved_hash, expected_config_hash=None):
+```
+
+BACKEND-API was right to escalate rather than edit, and right to reject the
+`try/except TypeError` workaround — production bending to accommodate a fake is
+the inversion of this sprint's whole lesson.
+
+### Task 4 — F7's two assertions, after HC-S6-FIX-2 lands
+
+Both in `scoping_hc/test_hc_approval_attacks.py`:
+
+- `test_attack_reapprove_after_dispatch_to_clear_the_already_dispatched_guard` — strict-xfail → XPASS once the guard is added. Remove the marker.
+- `test_reapproving_resets_the_status_that_guards_dispatch` — asserts `set_approved_hash`'s condition does **not** mention status. It now does, by ruling. Invert it.
+
+### Task 5 — `scoping_hc/test_hc_deployed_revision.py` will go red at Friday's deploy. Make that legible in advance.
+
+**This is the task I most want done and it is not a finding — it is a trap I found while writing this brief.**
+
+That module probes the live service. Three of its tests pin what production
+currently *is*, and the Friday deploy flips all three at once:
+
+- `test_the_scoping_read_endpoints_are_open_to_anonymous_callers` — Q3 closes them
+- `test_the_scoping_read_path_works_against_the_real_platform_tables` — that read now needs the key
+- `test_the_deployed_revision_still_cannot_say_which_code_is_running` — DO-HARDEN's `/health` commit SHA fix
+
+So on the first weekend of the season, a deploy that is entirely fixes will turn
+this module red, and the obvious reading is that the deploy broke something.
+
+**Do not invert them now** — they correctly describe production until Friday, and
+inverting early makes them red for the wrong reason. Instead give each an
+assertion message naming the deploy that will flip it and what a red result
+means, so the failure reads as *the fix landed* rather than *something broke*.
+Then say in your return which tests are expected to flip, so it can go on the
+deploy checklist.
+
+### Scope
+
+In-scope: `06-TESTING-QA/**`.
+
+Out-of-scope: everything else. If a test seems wrong beyond the eleven named
+above, escalate — do not edit another agent's code to make your test pass. That
+constraint is why HC-S6 found what it found.
+
+Kill-switch — stop and escalate:
+- HC-S6-FIX-2 has not landed (check `../00-PROJECT-LEAD/` for its return).
+- A test in tasks 1 or 4 does not XPASS after the fix — that is a finding, not a marker to remove.
+- Removing a marker turns something else red.
+- Over 2 hours.
+
+### Acceptance
+
+- [ ] Six markers removed; all six tests pass as regression guards
+- [ ] `test_the_in_memory_stand_in_clears_what_the_real_sql_does_not` inverted and its comment names the AST mechanism
+- [ ] Both Q4 tests assert the inverse property, including the Pydantic-coercion reason
+- [ ] No `xfail` remains on any assertion pinning a deleted design claim
+- [ ] `RecordingStore` signature fixed; `test_a_session_completes_and_dispatches_with_no_anthropic_key` passes
+- [ ] Both F7 assertions disposed of
+- [ ] Three deployed-revision tests carry messages explaining a post-deploy red
+- [ ] `scoping_hc/` and `integration/test_hypothesis_chat.py` are green except tests that are red only because production is not yet deployed — listed explicitly
+- [ ] No file outside `06-TESTING-QA/` modified
+
+### Returns-with
+
+- Which acceptance criteria are met, and any that are not
+- The before/after counts for `scoping_hc/` and `integration/test_hypothesis_chat.py`
+- **The list of tests expected to flip at deploy**, for the deploy checklist
+- Any test you were asked to remove a marker from that did **not** XPASS — that is a finding and it outranks the rest of this brief
+- Your own judgement: after HC-S6-FIX and HC-S6-FIX-2, where is this feature still weakest? You have read it cold twice now.
+
+### Escalation
+
+`../00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md`. The question, what you were
+doing, what you tried. Then exit.

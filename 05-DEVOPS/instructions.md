@@ -243,6 +243,53 @@ Kill-switch — stop and escalate:
 
 ## 🔴 CURRENT TASK — DO-HARDEN: close the observability gaps INC-002 exposed (assigned 2026-09-09)
 
+### ⚠️ FIRST — provenance. Three findings, one root cause (added 2026-09-09, revised same day)
+
+**Nothing here is urgent any more.** The gameday timeout was raised to P0 earlier
+today on the assumption that the job might not fit its 1800s budget. That was
+wrong: a watched run (`nfl-pipeline-gameday-lpvv4`, 2026-09-09) completed in
+**13m08s**, and `nfl-pipeline-full-rcn9v` in 13m30s. 2.2x headroom. The season is
+covered. Do this work properly rather than quickly.
+
+**DP-R-13 — the deployment cannot say what it is running. Do this one first.**
+
+Both pipeline jobs point at `gcr.io/nfl-model-471509/nfl-data-pipeline:latest`, a
+mutable tag. On 2026-09-08 the 07:00 gameday run and the 11:00 full run executed
+**different images from that same tag**, and nothing in either job spec records
+which. `.gcloudignore` excludes `.git/`, so no image carries a commit either.
+
+This is INC-002's root cause still in place. That incident took a week to diagnose
+because a four-month-old image was running while the fix sat in source — and the
+digest history still shows the gap, builds jumping 2026-05-08 → 2026-09-07.
+Establishing which code ran on 2026-09-09 took a conversation, a build timestamp
+and an 11-hour comparison, to learn something a pinned digest makes a lookup.
+
+**Fix:** pin the immutable digest in `jobs.tf`, or tag by commit SHA and reference
+that. Same treatment for the API service if it shares the pattern.
+
+**The `/health` commit SHA regression is the same finding.** It was already on
+DO-HARDEN as its own item; do the two together, because "which code is running"
+is one question and it currently has no answer on either the pipeline or the API.
+
+**The gameday timeout — while you are in `jobs.tf`.** Raise `nfl-pipeline-gameday`
+from `1800s` to `7200s` to match `nfl-pipeline-full`. The two jobs do identical
+work (`run_pipeline_job.py`'s gameday branch passes `--start-at 1`, which is
+already the default — DP-R-01), so the budgets should match. Margin, not rescue.
+
+**Do NOT** change `run_pipeline_job.py`, the schedulers, or what the job does.
+The real fix — gameday restricted to the current season, written per-partition
+rather than dropped and rebuilt — is DATA-PIPELINE's, deferred until after the
+first live weekend. Full context: `01-DATA-PIPELINE/DP-REVIEW-2026-09-09.md`.
+
+**Acceptance**
+- [ ] `gcloud run jobs describe` on both pipeline jobs shows an immutable digest, not `:latest`
+- [ ] `/health` reports a real commit SHA; a redeploy changes it
+- [ ] `gcloud run jobs describe nfl-pipeline-gameday` reports a 7200s task timeout
+- [ ] Terraform state clean — no drift left by a console edit
+- [ ] "What is running right now, and what was it built from" is answerable by one command for the pipeline and one for the API. State both commands in your return.
+
+
+
 cd /path/to/nfl-prediction-app/05-DEVOPS
 
 **Read `../00-PROJECT-LEAD/INC-002-ingest-blocked-by-closing-line-gate.md` first**, especially the closing sections. The urgent work is done; this is the "so it never takes a week to notice again" work.

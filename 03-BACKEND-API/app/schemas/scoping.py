@@ -41,11 +41,28 @@ class ApproveRequest(BaseModel):
     Required, and compared against the server's own recomputation.  If the two
     disagree the client is looking at a stale brief and approval is refused —
     this is the check that stops "approve one thing, run another".
+
+    `approval_hash` is the same check over the WHOLE brief, including the
+    record-only answers the config does not hold.  Optional only because
+    HC-S6-FIX-Q5 is unruled: `config_hash` alone leaves a window in which a
+    falsifier edited between rendering the brief and approving it is not caught
+    until dispatch.  A client that sends the value from BriefResponse closes
+    that window now.  Send it.
     """
     config_hash: str = Field(min_length=64, max_length=64)
+    approval_hash: Optional[str] = Field(default=None, min_length=64, max_length=64)
 
 
 class SessionStateResponse(BaseModel):
+    """
+    The stored state of a session, as stored.
+
+    `config_hash` is the hash of the config payload — the number printed in the
+    brief and the one to send back to /approve.  `approved_hash` covers the
+    WHOLE approved brief (the config and the record-only answers), so the two
+    are deliberately different values and comparing them means nothing.  See
+    app/scoping/hashing.py and FINDING HC-S6-F2.
+    """
     session_id: str
     hypothesis_text: str
     status: Literal["scoping", "assembled", "approved", "dispatched", "abandoned"]
@@ -59,8 +76,17 @@ class SessionStateResponse(BaseModel):
 
 
 class BriefResponse(BaseModel):
+    """
+    The rendered brief and the two hashes over it.
+
+    `config_hash` covers the config and is the value printed inside
+    `brief_markdown`.  `approval_hash` covers the whole document — the config
+    AND the record-only answers — and is what the server stores as the approval.
+    Send both back to /approve.
+    """
     session_id: str
     config_hash: str
+    approval_hash: str
     brief_markdown: str
 
 
@@ -69,6 +95,23 @@ class DispatchResponse(BaseModel):
     experiment_id: str
     run_id: str
     status: str = "running"
+
+
+class DispatchDryRunResponse(BaseModel):
+    """
+    What `POST /dispatch?dry_run=true` returns: every check passed, and here is
+    the experiment that WOULD have been created.
+
+    Nothing was written — no experiment, no run, no change to the session.
+    HC-S6 Q2: dispatch was previously unexercisable without minting a real
+    experiment and firing the production runner, so it was never exercised.
+    """
+    session_id: str
+    dry_run: bool = True
+    status: str = "not_dispatched"
+    config_hash: str
+    approved_hash: str
+    would_create: dict[str, Any]
 
 
 class CapabilityGapOut(BaseModel):
@@ -105,6 +148,12 @@ class ReviewResponse(BaseModel):
     evaluated_games: Optional[int] = None
     slice_fraction: Optional[float] = None
     advisory_only: bool = True
+    # Inputs the review could not load, by name, and a flag for callers that
+    # only want to know whether to trust the verdict. Non-empty means checks
+    # did not run and there is a concern of kind "upstream_error" saying which.
+    # A check that could not run is not a check that passed — HC-S6-F6.
+    checks_unavailable: list[str] = Field(default_factory=list)
+    degraded: bool = False
 
 
 class PrefillOut(BaseModel):
@@ -127,6 +176,11 @@ class ExtractResponse(BaseModel):
     session_id: str
     prefills: list[PrefillOut] = Field(default_factory=list)
     gaps: list[CapabilityGapOut] = Field(default_factory=list)
+    # Gaps that were detected but could NOT be written to capability_gaps.
+    # They carry status "not_recorded" and nothing will surface them later —
+    # an empty `gaps` must never be the only signal that a write failed.
+    # HC-S6-F8.
+    gaps_not_recorded: list[CapabilityGapOut] = Field(default_factory=list)
     # True when ANTHROPIC_API_KEY is unset or the call failed. The session is
     # still completable — every question simply gets asked normally.
     extraction_unavailable: bool = False

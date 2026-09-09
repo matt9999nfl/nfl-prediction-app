@@ -44,19 +44,61 @@ def _concern(severity: str, kind: str, message: str) -> dict[str, str]:
     return {"severity": severity, "kind": kind, "message": message}
 
 
+def fold_test_seasons(methodology: dict[str, Any]) -> list[int]:
+    """
+    The seasons the walk-forward runner will actually evaluate, in order.
+
+    THE ONE DEFINITION OF A FOLD.  This is the same algorithm as
+    02-MODELING/backtests/walk_forward.py::build_folds_from_config, which is the
+    reference: the first test season is `start_season + train_seasons`, every
+    fold evaluates exactly ONE season, and `test_seasons` is the STRIDE between
+    folds, not the number of seasons inside one.
+
+    FINDING HC-S6-F3.  This module used to compute `folds = span - train_seasons`
+    and multiply by `test_seasons`, which is a second, different definition of a
+    fold living in the same codebase.  The two agreed only at `test_seasons=1`,
+    the single value the old test asserted; at `test_seasons=2` the governor
+    reported about 3.5x the games the runner would evaluate, so the sample-size
+    check cleared designs it exists to stop.
+
+    The duplication cannot be deleted outright — ADR-012 commitment 1 keeps
+    app/scoping/ free of any import outside stdlib, pydantic and its own
+    siblings, and the runner module pulls pandas, sklearn and xgboost.  So the
+    algorithm is restated here and pinned to the runner's own source by
+    tests/test_scoping_folds.py, which fails if the two ever diverge again.
+
+    Cannot be imported here; must not be reimplemented differently.
+    """
+    start = int(methodology.get("start_season") or 0)
+    end = int(methodology.get("end_season") or 0)
+    train = int(methodology.get("train_seasons") or 0)
+    stride = int(methodology.get("test_seasons") or 1) or 1
+    if stride < 1 or train < 0 or start <= 0 or end <= 0:
+        return []
+
+    seasons: list[int] = []
+    test = start + train
+    while test <= end:
+        seasons.append(test)
+        test += stride
+    return seasons
+
+
 def evaluated_games(methodology: dict[str, Any], games_per_season: int = GAMES_PER_SEASON) -> int:
     """
     Games the walk-forward harness will actually evaluate, before any slice.
 
-    folds = span - train_seasons, each testing test_seasons.  This is the number
-    that matters for whether a result means anything — not the span of seasons,
-    which is what people quote.
+    One fold, one season, so this is simply the fold count times the games in a
+    season.  This is the number that matters for whether a result means
+    anything — not the span of seasons, which is what people quote.
+
+    Known overstatement, FINDING HC-S6-F4, unruled and NOT fixed here:
+    `games_per_season` is a flat 272, but 2015-2020 were 16-game seasons (256)
+    and one 2022 game was cancelled.  On the tree's default window that is 1,904
+    reported against 1,871 real — 1.8%, in the same direction as F3 was.
+    Escalated in 00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md (HC-S6-Q4).
     """
-    span = int(methodology.get("end_season", 0)) - int(methodology.get("start_season", 0)) + 1
-    train = int(methodology.get("train_seasons", 0))
-    test = int(methodology.get("test_seasons", 1)) or 1
-    folds = max(0, span - train)
-    return max(0, folds * test * games_per_season)
+    return max(0, len(fold_test_seasons(methodology)) * games_per_season)
 
 
 def check_sample_size(
@@ -269,6 +311,53 @@ def check_falsifier(record_only: dict[str, Any]) -> list[dict[str, str]]:
     return []
 
 
+def check_unavailable_inputs(
+    unavailable: Optional[dict[str, str]] = None,
+    config: Optional[dict[str, Any]] = None,
+) -> list[dict[str, str]]:
+    """
+    FINDING HC-S6-F6.  An input that could not be loaded is not an input that
+    said "fine".
+
+    `unavailable` maps the name of an input the caller could not obtain to the
+    reason.  Each one becomes a HIGH concern naming the check it disabled, so a
+    review taken during a storage outage cannot be mistaken for a review of a
+    sound experiment.  Silence must never have the same shape as safety.
+
+    Why this lives here and not in check_sample_size: with `slice_fraction=None`
+    that function genuinely cannot tell "no filter was applied" from "the count
+    failed", and guessing would make an honest no-filter config noisy.  The
+    caller knows which of the two happened, so the caller says so.
+    """
+    if not unavailable:
+        return []
+
+    labels = {
+        "slice_fraction": (
+            "the real proportion of games surviving the game-universe filter"
+        ),
+        "prior_configs": (
+            "the saved experiments this design would be compared against"
+        ),
+    }
+    concerns: list[dict[str, str]] = []
+    for name, reason in sorted(unavailable.items()):
+        what = labels.get(name, name)
+        message = (
+            f"This review is incomplete: {what} could not be loaded ({reason}). "
+            f"The checks that depend on it did not run, so their silence means "
+            f"nothing here."
+        )
+        if name == "slice_fraction" and (config or {}).get("methodology", {}).get("game_universe"):
+            message += (
+                " Your design applies a game-universe filter, so the evaluated-game "
+                "figure below counts the UNSLICED number and overstates the real "
+                "sample. Re-run this review before reading it as a verdict."
+            )
+        concerns.append(_concern(SEVERITY_HIGH, "upstream_error", message))
+    return concerns
+
+
 def verdict_for(concerns: list[dict[str, str]]) -> str:
     highs = sum(1 for c in concerns if c["severity"] == SEVERITY_HIGH)
     if highs >= 2:
@@ -289,14 +378,21 @@ def review(
     prior_configs: Optional[list[dict[str, Any]]] = None,
     slice_fraction: Optional[float] = None,
     current_season: Optional[int] = None,
+    unavailable_inputs: Optional[dict[str, str]] = None,
 ) -> dict[str, Any]:
     """
     Run every deterministic check.  Returns {concerns, verdict}.
 
     Advisory only.  Nothing in the dispatch path reads this.
+
+    `unavailable_inputs` is how the caller reports an input it could not load —
+    {input_name: reason}.  Each becomes a concern of its own and the verdict is
+    never `proceed` while one is present, because a check that could not run is
+    not a check that passed (FINDING HC-S6-F6).
     """
     record_only = record_only or {}
     concerns: list[dict[str, str]] = []
+    concerns += check_unavailable_inputs(unavailable_inputs, config)
     concerns += check_sample_size(config, slice_fraction)
     concerns += check_threshold_plausibility(config)
     concerns += check_slice_is_also_a_feature(config)
@@ -308,4 +404,12 @@ def review(
 
     order = {SEVERITY_HIGH: 0, SEVERITY_MEDIUM: 1, SEVERITY_LOW: 2}
     concerns.sort(key=lambda c: order.get(c["severity"], 3))
-    return {"concerns": concerns, "verdict": verdict_for(concerns)}
+
+    verdict = verdict_for(concerns)
+    if unavailable_inputs and verdict == VERDICT_PROCEED:
+        # Belt and braces: an unavailable input is a HIGH concern, so this is
+        # already unreachable.  It is here so that a later change to the
+        # severity arithmetic cannot quietly restore a clean bill of health to a
+        # review that checked nothing.
+        verdict = VERDICT_CAUTION
+    return {"concerns": concerns, "verdict": verdict}

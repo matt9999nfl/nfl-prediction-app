@@ -164,12 +164,40 @@ def test_a_changed_value_changes_the_hash(complete):
     assert config_hash(other) != config_hash(payload)
 
 
-def test_int_and_float_are_not_the_same_config(complete):
-    """`min_sample: 500` and `500.0` validate differently — they must not collide."""
+def test_a_whole_number_float_hashes_as_its_integer_form(complete):
+    """
+    REPLACES test_int_and_float_are_not_the_same_config.
+
+    That test asserted `min_sample: 500` and `500.0` were different configs,
+    which is what hashing.py used to claim. FINDING HC-S6-F9: storage never
+    honoured the distinction. BigQuery's JSON type returns 2.0 as 2, and
+    dispatch recomputes the hash from answers read back out of BigQuery — so a
+    config holding a whole-number float could never match its own approval and
+    the session wedged permanently with `approval_mismatch`.
+
+    The distinction was unenforceable through the storage layer, so it is gone.
+    Pydantic coerces 500.0 to 500 for an int field before anything runs, so the
+    two really are the same experiment.
+    """
     _a, payload, _ro = complete
     other = copy.deepcopy(payload)
     other["evaluation"]["min_sample"] = float(other["evaluation"]["min_sample"])
+    assert config_hash(other) == config_hash(payload)
+
+
+def test_a_real_fractional_difference_still_moves_the_hash(complete):
+    """The fold is only of the .0 case — 500 and 500.5 are different designs."""
+    _a, payload, _ro = complete
+    other = copy.deepcopy(payload)
+    other["evaluation"]["min_sample"] = other["evaluation"]["min_sample"] + 0.5
     assert config_hash(other) != config_hash(payload)
+
+
+def test_booleans_do_not_collapse_into_numbers(complete):
+    """bool is an int subclass in Python; `true` must not canonicalise as `1`."""
+    from app.scoping.hashing import canonical_json
+    assert canonical_json({"x": True}) == '{"x":true}'
+    assert config_hash({"x": True}) != config_hash({"x": 1})
 
 
 def test_canonical_json_is_stable_and_sorted(complete):

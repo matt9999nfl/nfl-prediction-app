@@ -95,7 +95,7 @@ Principle throughout: **current season warns, completed seasons still error.** N
 ### Still unverified
 
 - The rebuild with fixes 2 and 3 has not been run.
-- `validate_and_report.py` (step 7) exits on any failed check and has **not** been audited against 2026 partial data. It is the most likely next failure. It was deliberately not pre-emptively loosened — weakening a validator on speculation is how the first three gates came to be wrong.
+- ~~`validate_and_report.py` was deliberately not loosened~~ **SUPERSEDED within the same commit.** This bullet was written mid-incident, before gate 4 was fixed; `42336b6` adds `is_in_progress_season()` and makes per-season checks advisory for the live season. The bullet was never re-read after the fix landed, so this document contradicted itself for two days — one section saying the file was untouched, another listing it as changed. Corrected 2026-09-09 after DATA-PIPELINE caught it during DP-REVIEW. **It remains un-audited against 2026 partial data**, which is what DP-REVIEW is for.
 - Whether the 2015–2025 PBP from the 22:33 run actually landed in BigQuery. The summary logged 532,376 rows as `[OK]` before the exit, and loads happen per-season inside `ingest_season`, so they probably did — but "probably" is exactly what this incident is about. Verify `raw_nflfastr.pbp.last_modified`.
 
 ---
@@ -114,7 +114,16 @@ All the same mistake: **checks that describe a COMPLETED season, wired as gates 
 |---|---|---|
 | 1 | `run_pipeline.py` — closing-line null rate > 5% | Every run, all season |
 | 2 | `validate_pbp` — requires ≥40,000 rows | Every gameday run until ~week 15 |
-| 3 | `build_curated_games` — no `EMPTY` tolerance | Every run until week 1 completed |
+| 3 | `build_curated_games` — no `EMPTY` tolerance | **INFERRED, NEVER OBSERVED — see note** |
+
+> **Correction, 2026-09-09 (DP-REVIEW, DP-R-06).** Gates 1, 2 and 4 were observed
+> in logs. **Gate 3 was not.** The 2026-09-07 run died at step 3, so steps 5-7 never
+> executed. Gate 3 was inferred by reading `build_curated_plays.py` and assuming its
+> sibling behaved the same way — and the inference names a status
+> `build_curated_games.build_season` cannot emit: it returns only `OK` and `ERROR`.
+> The `EMPTY` tolerance added for it is unreachable code. Harmless, mildly defensive,
+> **but it is not a fix and must not be counted as one.** This table presented four
+> gates identically; three were evidence and one was a guess.
 | 4 | `validate_and_report` — completed-season thresholds per season | Every run, all season |
 
 Gate 2 is the one worth remembering. It would not have announced itself today — it would have failed quietly every Sunday until mid-December, long after everyone stopped watching the deploy.
@@ -123,7 +132,7 @@ Gate 2 is the one worth remembering. It would not have announced itself today �
 
 **The current season warns; completed seasons still error.** Every historical guarantee is exactly as strict as it was. In-progress checks still run and still appear in the validation report, marked `⚠️ IN-PROGRESS`, so the softening is visible in the output rather than buried in source.
 
-### Files changed (all in 01-DATA-PIPELINE, all UNCOMMITTED)
+### Files changed (all in 01-DATA-PIPELINE — committed as `42336b6`, pushed; the six below plus `.gitignore` at repo root)
 
 - `scripts/run_pipeline.py` — closing-line gate to warning *(pre-existing, 2026-08-31; deployed here)*
 - `adapters/nflfastr.py` — `current_season()`; row-count floor advisory for the live season
@@ -200,9 +209,9 @@ The alert watches `completed_execution_count{result="failed"}`. A job that dies 
 
 | # | Item | Owner |
 |---|---|---|
-| 1 | Three commits unpushed (`42336b6`, `557d91e`, `9f45c18`) — needs git on Matt's machine | Matt |
+| 1 | ~~Three commits unpushed~~ **RESOLVED 2026-09-09.** `main` is level with `origin/main` at `06d99c1` | — |
 | 2 | Pre-container-failure alert blind spot (above) | DEVOPS |
 | 3 | P4 data-freshness check — still unbuilt; would have caught INC-002 on 2026-09-01 | DEVOPS |
 | 4 | `/health` reports `commit:"unknown"` since the 2026-09-08 API build | DEVOPS |
-| 5 | Five DATA-PIPELINE files and one DEVOPS file edited by PROJECT-LEAD at Matt's instruction — review, do not inherit silently | DATA-PIPELINE, DEVOPS |
+| 5 | **Six** DATA-PIPELINE files (plus `.gitignore`) and one DEVOPS file edited by PROJECT-LEAD at Matt's instruction — review, do not inherit silently | DATA-PIPELINE, DEVOPS |
 | 6 | Thursday 2026-09-10 TNF is the first unattended scheduled run | — |

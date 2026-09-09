@@ -335,6 +335,309 @@ the returns-with asks. Recording it here because it is the same archetype one
 level down: the fake was kind, and so was the test's choice of which answer to
 change.
 
+---
+
+### HC-S6-FIX-Q6 — Implementing the F10 ruling changes `set_approved_hash`'s signature, and breaks one TESTING-QA fake I am not allowed to edit.
+
+**Date:** 2026-09-09
+**Agent:** BACKEND-API
+
+**What I was doing:**
+F10. The ruling: *"`set_approved_hash` should include the config hash it
+believes it is approving in its `WHERE` clause, so an approval that lost a race
+writes zero rows and returns a clear 409."*
+
+**What I tried:**
+Implemented as ruled:
+
+```python
+def set_approved_hash(client, session_id, approved_hash, expected_config_hash=None) -> bool
+```
+
+`expected_config_hash` defaults to `approved_hash`, so every existing 3-argument
+caller keeps working — including all four call sites in
+`06-TESTING-QA/integration/test_hypothesis_chat.py`, which need no edit and
+whose concurrency test now passes.
+
+One caller does break:
+`06-TESTING-QA/scoping_hc/test_hc_degradation.py::RecordingStore.set_approved_hash`
+takes exactly three arguments, so
+`test_a_session_completes_and_dispatches_with_no_anthropic_key` now fails with
+`TypeError: got an unexpected keyword argument 'expected_config_hash'`. That
+test is not about any finding — it is the no-Anthropic-key degradation contract,
+and it is failing purely because a stand-in has the old signature.
+
+I looked for a way to avoid the signature change:
+
+- **Pass it positionally** — same arity, same TypeError.
+- **A second function** (`set_approved_hash_if(...)`) — worse: their fixture
+  monkeypatches `set_approved_hash` by name, so the router would bypass the
+  stand-in entirely and try a real query against a dummy client.
+- **Store the approval hash in the `config_hash` column** so the condition can
+  read `config_hash = @approved_hash` with three arguments — this forces
+  `/brief` and the session state to report the approval hash as `config_hash`,
+  which breaks `test_brief_matches_the_hash_the_state_reports` and makes
+  `actual = config_hash(payload)` in `approve()` dead, which
+  `test_attack_approve_a_hash_the_client_computed_itself` pins.
+- **`try/except TypeError` around the call** — rejected on principle. That is a
+  production code path bending itself to accommodate a fake, in a sprint whose
+  whole lesson is that fakes must bend to production.
+
+**The question:**
+The fix is one line in their file:
+
+```python
+-    def set_approved_hash(self, _c, session_id, approved_hash):
++    def set_approved_hash(self, _c, session_id, approved_hash, expected_config_hash=None):
+```
+
+Do you want TESTING-QA to make it, or do you want me to? I have not touched it —
+the brief forbids editing their tests and says to escalate instead.
+
+**What I need to proceed:**
+Nothing blocking. F10 is implemented and its own tests pass. This is one
+red test in their suite, caused by my change, and I want it fixed by whoever
+owns the file rather than left to look like a regression in the degradation
+contract.
+
+---
+
+### HC-S6-FIX-Q7 — F4 and F7 have no ruling. Both are real, neither is in my six, and one of them is live.
+
+**Date:** 2026-09-09
+**Agent:** BACKEND-API
+
+**What I was doing:**
+Reconciling `06-TESTING-QA/HC-S6-FINDINGS.md` (F1–F10) against
+`HC-S6-RULINGS.md`, which rules on F1/F2, F3/F5, F6/F8, F9 and F10.
+
+**What I tried:**
+F4 and F7 are ruled on nowhere, and neither appears in the HC-S6-FIX brief's
+"six fixes". I have implemented neither, because guessing at an unruled finding
+is the thing the brief tells me not to do. Both are recorded in code comments
+pointing here.
+
+**F4 — `GAMES_PER_SEASON = 272` applied to 256-game seasons.**
+2015-2020 were 16-game seasons; one 2022 game was cancelled. On the tree's own
+default window the governor reports 1,904 evaluated games against a real 1,871.
+1.8%, and in the same overstating direction F3 was. It matters more than the
+size suggests because `evaluated_games` is presented to the user as a count,
+not an estimate, and the sample-size check compares it against a minimum the
+user set themselves.
+
+The fix is not free: an honest count needs real per-season game counts from
+`curated.games`, which means `evaluated_games` takes a season→count map and
+`/review` loads it. That puts a BigQuery read behind a number that is currently
+pure arithmetic — and under the F6 ruling I have just implemented, a read that
+fails must then produce a concern rather than a silent fallback to 272. It is a
+coherent design, but it is a design decision, not a bug fix.
+
+**F7 — re-approving after a dispatch re-opens the only guard against a second run.**
+`approve()` checks status not at all, and `set_approved_hash` sets
+`status = 'approved'` unconditionally. `dispatch` refuses a second run by
+checking `status == 'dispatched'`. So: dispatch → approve again → dispatch
+again, and you get two experiments, two Cloud Run jobs, and
+`session.experiment_id` overwritten so the first experiment is orphaned from the
+session that produced it. This is live in production today, mitigated only by
+`OWNER_API_KEY`.
+
+The fix is small — an `already_dispatched` guard in `approve()` matching the one
+in `answer_slot` — but it flips
+`scoping_hc/test_hc_approval_attacks.py::test_attack_reapprove_after_dispatch_to_clear_the_already_dispatched_guard`
+from strict-xfail to XPASS, and its sibling
+`test_reapproving_resets_the_status_that_guards_dispatch` asserts that
+`set_approved_hash`'s condition does NOT mention status. I kept both green by
+leaving F7 alone, deliberately, so it is visible rather than half-done.
+
+**The question:**
+1. F4: fix it with a real per-season count, keep the flat constant and label the
+   figure an estimate in the response, or leave it and close the finding?
+2. F7: is the `already_dispatched` guard in `approve()` mine to add now? It is
+   two lines and closes a live double-run path. I did not add it because it is
+   unruled and it changes a TESTING-QA assertion's outcome.
+
+**What I need to proceed:**
+A ruling on each. Neither blocks HC-S6-FIX, which is complete and returned.
+
+---
+
+### HC-S6-FIX-Q4/Q5 — status note from the follow-up session
+
+**Date:** 2026-09-09
+**Agent:** BACKEND-API
+
+Q4 and Q5 above were raised on 2026-09-08 and are still open. I was told to
+proceed with HC-S6-FIX, so I have — here is exactly what I did in each, so the
+rulings can still go either way cheaply.
+
+**Q4 (the F9 contradiction).** I made the code change the ruling asks for:
+`canonical_json` folds a whole-number float to its integer form and the claim is
+deleted from the docstring. The consequence stands unchanged — 
+`integration/test_hypothesis_chat.py::test_json_columns_round_trip_nested_arrays_and_explicit_nulls`
+still fails on `assert isinstance(stored["config"]["nested"]["array"][1], float)`
+and no backend change can make it pass. A second TESTING-QA test now fails for
+the same reason:
+`scoping_hc/test_hc_approval_attacks.py::test_attack_500_vs_500_point_0_to_collide_two_configs`
+asserts the deleted claim directly. **My recommendation is unchanged: option 1.**
+Until it is ruled, the brief's acceptance criterion *"test_hypothesis_chat.py
+passes: the four failures were the specification"* is met for three of the four.
+
+I added the round-trip test the F9 ruling asks for on the backend side —
+`tests/test_scoping_hash_roundtrip.py::test_the_hash_survives_a_real_round_trip`
+— which does a real write, read-back, rehash and cleanup against
+`platform.scoping_sessions`. It skips loudly without ADC, naming what was not
+verified rather than reporting a pass.
+
+**Q5 (does F2 change what `render()` prints).** I implemented **(a)** —
+`render()` is untouched, so no already-approved brief is invalidated and the
+kill-switch is not tripped. `approved_hash` now covers config + record-only
+answers; `config_hash` still covers the config and is still what the document
+prints.
+
+The window (a) leaves open is real and I did not want to leave it open silently,
+so I closed the half of it that needs no change to `render()`:
+`BriefResponse` now returns `approval_hash` alongside `config_hash`, and
+`ApproveRequest` accepts an optional `approval_hash` which is checked when
+present. A client that sends it is told at approve time that the falsifier moved;
+a client that does not is still only told at dispatch. Both behaviours are
+pinned by tests, including the one that documents the gap
+(`test_without_the_brief_hash_the_window_is_still_open_at_approve_time`).
+
+This is a stopgap, not the ruling. If you rule **(b)**, the change is: print
+`approval_hash` in `render()`'s final section instead of `config_hash`, make
+`ApproveRequest.approval_hash` required, and drop the config-only comparison —
+the values are already computed and already on the wire. If you rule **(a)**
+stands, the brief's closing paragraph should be reworded, because as written it
+promises something the document does not do.
+
+
+### DP-REVIEW-Q1 — Does anything downstream read `curated.plays` between Tuesday full runs? Blocks the gameday-mode fix.
+
+**Date:** 2026-09-09
+**Agent:** DATA-PIPELINE
+
+**What I was doing:** DP-REVIEW. Specifying the deferred fix for DP-R-01 —
+making `run_pipeline_job.py`'s gameday mode run only the steps its own comment
+says it runs (schedules + `curated.games`), instead of the full 7-step rebuild it
+actually runs today.
+
+**What I tried:** Worked out the required step set from `run_pipeline.py`. It is
+{1, 5}, which `--start-at` cannot express because it selects a contiguous suffix.
+`--only 1,5` is the smallest change. That part is settled.
+
+**The question:** Skipping step 6 means a gameday run no longer refreshes
+`curated.plays`, so new plays would land only on the Tuesday full run. Is that
+acceptable? It depends on whether MODELING or BACKEND-API reads `curated.plays`
+between Tuesdays. That is not my call and I cannot answer it from inside this
+folder.
+
+**What I need to proceed:** A ruling from PROJECT-LEAD, informed by MODELING and
+BACKEND-API, on whether `curated.plays` may go up to seven days stale during the
+season. If it may not, the gameday step set is {1, 5, 6} and the fix is
+correspondingly slower — which changes the timeout maths and possibly the
+conclusion. Spec is in `01-DATA-PIPELINE/DP-REVIEW-2026-09-09.md` §7.2. **Do not
+implement §7.2 until this is answered.**
+
+**ANSWERED — PROJECT-LEAD, 2026-09-09.** Step 6 cannot be skipped: `curated.plays`
+is read by the live API (`queries/games.py` play count and per-team aggregates,
+`queries/teams.py` and `routers/teams.py` EPA charts), degrading to empty rather
+than erroring (`routers/games.py:117` is explicitly best-effort). Skipping it makes
+game detail and team stats up to seven days stale in-season — not acceptable in
+September. MODELING reads it only in on-demand backtests and has no freshness
+requirement, so that half was a non-issue. Verified in source by DATA-PIPELINE.
+
+The ruling also overturned the question's own framing: step 6 builds
+`curated.plays` from `raw_nflfastr.pbp` (step 3), so any subset containing 6 must
+contain 3, and step selection is unusable as an axis. **The axis is season scope** —
+same steps, current season only, per-partition writes instead of drop-and-rebuild,
+which subsumes DP-R-12. §7.2 rewritten on that axis. Still deferred, not
+implemented.
+
+---
+
+### DP-REVIEW-Q2 — When may the DP-R-02 one-clause fix land? It is safe in isolation and touches a file that runs Friday unattended.
+
+**Date:** 2026-09-09
+**Agent:** DATA-PIPELINE
+
+**What I was doing:** DP-REVIEW, finding 1. `ingest_pbp.py`'s new `EMPTY` branch
+is not season-gated, so a *completed* season that fetches empty is skipped rather
+than failed. Combined with `run_pipeline` dropping `raw_nflfastr.pbp` before the
+loop, and `validate_and_report` only generating checks for seasons physically
+present in the table, a season of history can leave production with a green run
+and no alert.
+
+**What I tried:** Traced all three links and confirmed each in source. Confirmed
+the fix is one clause — `if len(df) == 0 and season >= current_season():` — and
+that it leaves the 2026 path unchanged, so it cannot re-break the ingest.
+
+**The question:** The working rules say write defects up rather than fix them,
+and the kill-switch says stop if a fix could re-break the ingest. This fix cannot
+re-break the ingest, but it does modify a file that runs unattended at
+Fri 05:00 UTC. I read that as "not before the weekend" and have not applied it.
+Confirming rather than assuming.
+
+**What I need to proceed:** Confirmation to land it after the first live weekend,
+or an instruction to land it sooner. Recommended order once cleared: DP-R-02,
+DP-R-03, DP-R-04, then the status enum from Q4.
+
+**ANSWERED — PROJECT-LEAD, 2026-09-09.** Deferred, and on a stronger argument than
+the one I offered. Landing the clause requires rebuilding and redeploying the
+pipeline image ~44 hours before an unattended run. The clause is safe; the rebuild
+is not — the 2026-09-08 rebuild is how the scoping router reached production
+unnoticed and how `/health` lost its commit SHA in the same push. The unit of
+deployment risk is the image, not the edit. Ordering accepted as written.
+
+---
+
+### DP-REVIEW-Q3 — Image provenance and the Phase 6 migration are both blocked on credentials I cannot reach.
+
+**Date:** 2026-09-09
+**Agent:** DATA-PIPELINE
+
+**What I was doing:** Step 1 of the review — confirming the deployed job was
+built from `42336b6` before reviewing it — and the "Also do" item, running
+`scripts/migrate_phase6_scoping.py` and comparing the deployed schema against
+`NEW_TABLES` field by field.
+
+**What I tried:** `gcloud`, `bq` and `google.cloud.bigquery` are all absent from
+the shell available to me on Matt's machine — it is an isolated Linux VM with
+only the connected folders mounted, and ADC lives in `AppData\Roaming\gcloud` on
+the Windows host, which the bridge will not mount and should not. Network from
+the VM works; authentication and the CLI are what is missing. Commands were
+issued to Matt to run on the host and paste back.
+
+**The question:** Not a question so much as a recorded gap. `.gcloudignore`
+excludes `.git/`, so no image this project builds carries commit metadata, and
+provenance cannot be established from the artifact alone — the decisive test is
+hashing the six files inside the image against the commit blobs.
+
+**What I need to proceed:** The two command batches issued 2026-09-09. **If the
+deployed image is not `42336b6`, every verdict in DP-REVIEW §1 describes code
+that is not running and the review must be redone against what is.**
+
+---
+
+### DP-REVIEW-N1 — Recorded, already ruled: gameday entrypoint and timeout (DP-R-01).
+
+**Date:** 2026-09-09
+**Agent:** DATA-PIPELINE
+
+Recorded here for the trail; no answer needed. `run_pipeline_job.py`'s gameday
+branch is byte-identical in behaviour to full (`--start-at` defaults to 1), and
+runs the full 7-step rebuild under a 1800s timeout against full's 7200s. First
+unattended run Fri 05:00 UTC. Escalated in-session and ruled by PROJECT-LEAD the
+same day: DEVOPS raises the timeout (jobs.tf ~144, 1800s → 7200s) as P0, then a
+watched forced run of `nfl-pipeline-gameday`; the real fix is deferred to
+DP-REVIEW §7.2. DATA-PIPELINE does not touch `jobs.tf`, `run_pipeline_job.py` or
+the schedulers.
+
+Also recorded: `curated.games` is dropped and rebuilt on every run and the games
+API reads it, so each gameday run opens a window with no games on the live site —
+three times a week, one straight after TNF (DP-R-12). Availability, not
+correctness, and the reason §7.2 is urgent rather than tidy.
+
+
 ## Resolved
 
 *(none)*
