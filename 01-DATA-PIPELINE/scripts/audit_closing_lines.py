@@ -103,8 +103,15 @@ def main():
     # 6. Documentation note
     print("""
 === Source Notes ===
-nflverse documents spread_line as the CLOSING spread (home-team perspective,
-negative = home favored). This matches Pro-Football-Reference closing lines.
+nflverse documents spread_line as the CLOSING spread. The sign convention is
+POSITIVE = HOME FAVOURED ("A positive number means the home team was favored by
+that many points, a negative number means the away team was favored" — nflverse
+schedules data dictionary, verified 2026-09-09).
+
+This comment previously said "negative = home favored", which is backwards.
+build_curated_games.derive_home_covered() has always used the correct
+convention, so no label was ever wrong — but a comment contradicting the label
+logic sitting one file away is a trap, and INC-001 was a label inversion.
 Source: https://nflverse.nflverse.com/reference/schedules.html
 
 DECISION CRITERIA (per spec):

@@ -92,6 +92,25 @@ def run_ingest_schedules(client, adapter):
         r = ingest_season(client, adapter, season)
         results.append(r)
     _print_summary("Schedules Ingest", results)
+
+    # Capture the market data before it is overwritten. raw_nflfastr.schedules is
+    # dropped and rebuilt on every run and curated.games keeps one spread per game,
+    # so without this there is no record that a line ever moved.
+    #
+    # Deliberately non-fatal but LOUD: a snapshot failure must not stop pbp ingest
+    # mid-season, but it must not pass quietly either — failing open and silent is
+    # HC-S6-F6 and is how the 115-day outage stayed invisible. The error is logged
+    # with a traceback and carried into the step summary.
+    try:
+        from scripts.snapshot_lines import snapshot
+        snap = snapshot(client, seasons=SEASONS)
+        results.append({"season": "line_snapshots", "rows": snap["inserted"],
+                        "status": snap["status"]})
+    except Exception as exc:
+        logger.error("Line snapshot FAILED: %s", exc, exc_info=True)
+        results.append({"season": "line_snapshots", "rows": 0,
+                        "status": "SNAPSHOT_FAILED", "errors": [str(exc)]})
+
     return results
 
 
