@@ -115,7 +115,9 @@ A red Tier 1 blocks the push. A red Tier 2 blocks merge. A red Tier 3 alerts the
 
 ---
 
-## 🔴 CURRENT TASK — HC-S6: Hypothesis Chat test suite (assigned by PROJECT-LEAD, 2026-08-31)
+## ✅ CLOSED — HC-S6 (2026-09-08) — complete and accepted. 56 tests, six findings, requirement A met against real BigQuery. Rulings in ../00-PROJECT-LEAD/HC-S6-RULINGS.md. Next TESTING-QA work is a re-run after BACKEND-API returns HC-S6-FIX; do not start it unprompted.
+
+<details><summary>Original brief, retained for history</summary>
 
 cd /path/to/nfl-prediction-app/06-TESTING-QA
 
@@ -229,3 +231,5 @@ Assert structurally that nothing under `app/scoping/` constructs a BigQuery clie
 - Confirmation that no file outside `06-TESTING-QA/` changed
 - Proof the live tables are clean after the run
 - Your own judgement, in prose: do the three guarantees hold? Where is this feature weakest? You have read it cold, which nobody else in this phase has.
+
+</details>

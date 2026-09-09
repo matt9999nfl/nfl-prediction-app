@@ -177,7 +177,9 @@ All jobs run as Cloud Functions or Cloud Run jobs in project `nfl-model-471509`.
 
 ---
 
-## 🔴 CURRENT TASK — HC-S1: Hypothesis Chat, Stage 1 (assigned by PROJECT-LEAD, 2026-08-31)
+## ✅ CLOSED — HC-S1 (2026-08-31) — complete. platform.scoping_sessions and platform.capability_gaps exist and are verified. Current DATA-PIPELINE work is at the bottom of this file.
+
+<details><summary>Original brief, retained for history</summary>
 
 cd /path/to/nfl-prediction-app/01-DATA-PIPELINE
 
@@ -266,3 +268,64 @@ Format: the question, what you were doing when you got stuck, what you tried. Th
 - Proof of the round-trip write and read on both new tables
 - Confirmation the migration script was run twice: second run exits 0 and leaves exactly the same two tables
 - Wall-clock time
+
+</details>
+
+---
+
+## 🔴 CURRENT TASK — DP-REVIEW: audit five files PROJECT-LEAD edited in your folder (assigned 2026-09-09)
+
+cd /path/to/nfl-prediction-app/01-DATA-PIPELINE
+
+**Read `../00-PROJECT-LEAD/INC-002-ingest-blocked-by-closing-line-gate.md` first.**
+
+### Why this exists
+
+On 2026-09-07, with two days to kickoff and the 2026 ingest completely blocked, PROJECT-LEAD edited five files in this folder directly at Matt's explicit instruction. That crosses the delegation boundary in `../00-PROJECT-LEAD/instructions.md`, which says PROJECT-LEAD writes specs and you write code.
+
+The changes work — `nfl-pipeline-full` completes 7/7 and `raw_nflfastr.pbp` is fresh. **They have not been reviewed by anyone who owns this code.** Your job is to review them as you would a pull request from a stranger, not to assume they are correct because they are deployed.
+
+### The changes
+
+All follow one principle: **the current season warns; completed seasons still error.** Verify that principle is actually upheld in each, and that no historical guarantee was weakened.
+
+1. `scripts/run_pipeline.py` — closing-line null-rate gate downgraded from `sys.exit(1)` to a warning (this one predates PROJECT-LEAD; it was written 2026-08-31 and merely deployed)
+2. `adapters/nflfastr.py` — added `current_season()`; the 40,000-row floor in `validate_pbp` is a warning for the in-progress season, an error for finished ones
+3. `scripts/ingest_pbp.py` — zero plays returns `EMPTY` and skips the load
+4. `scripts/build_curated_games.py` — tolerates `EMPTY`, matching `build_curated_plays.py`
+5. `.gcloudignore` — new; keeps 29 MB of staged parquet out of the build context and the production image
+
+### Questions worth answering, not just "does it look right"
+
+- `current_season()` uses month < 7 as the cutover. Is that correct for every case you care about — a January playoff game belongs to the previous season's label. Does anything here run in Jan–Jun where it matters?
+- `validate_rosters` has no row-count check at all. Should it? It passed only because it never checks.
+- `validate_schedules` keeps a hard 256-row floor. 2026 passed because the full schedule publishes in advance. Is that reliable every year, or is it luck?
+- Is `EMPTY` handled consistently everywhere a status is checked, or are there more call sites with the `build_curated_games` bug?
+
+### Also do
+
+**Run `scripts/migrate_phase6_scoping.py` once.** It has never been executed. The tables it creates already exist (created 2026-08-31 via console DDL derived from this script's own `NEW_TABLES` definition), so a first run should be a clean no-op that passes its own validation. Confirm that. Until it runs, there is data in production that no verified script produced — the inverse of this project's own remediation pitfall.
+
+Requires ADC: `gcloud auth application-default login` is already done on Matt's machine.
+
+### Scope
+
+In-scope: the five files above, `scripts/migrate_phase6_scoping.py`, and any test you want to add.
+Out-of-scope: `../03-BACKEND-API/**`, `../02-MODELING/**`, anything in `platform.*` beyond running the migration.
+
+Kill-switch: if you find a change that is actually wrong and fixing it would re-break the ingest, **stop and escalate** — the season is live and a broken pipeline now is worse than a slightly wrong one.
+
+### Acceptance
+
+- [ ] Each of the five changes reviewed, with a written verdict: correct / correct-but-narrow / wrong
+- [ ] The four questions above answered
+- [ ] `migrate_phase6_scoping.py` run, output recorded, validation passing
+- [ ] Any new defect written up rather than silently fixed, unless it is trivial
+
+### Escalation
+
+`../00-PROJECT-LEAD/HYPOTHESIS-CHAT-QUESTIONS.md`.
+
+### Returns-with
+
+Your verdict on each change, the four answers, the migration output, and anything you would have done differently. PROJECT-LEAD wrote these under time pressure and wants them challenged.

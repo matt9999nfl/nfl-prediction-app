@@ -153,7 +153,9 @@ When done, build and deploy (`npm run build` → `gsutil -m rsync -r -d dist/ gs
 
 ---
 
-## 🔴 CURRENT TASK — HC-S5: Hypothesis Chat page (assigned by PROJECT-LEAD, 2026-08-31)
+## ✅ CLOSED — HC-S5 (2026-09-07) — complete and accepted. Six findings raised, rulings in ../00-PROJECT-LEAD/HC-FINDINGS-S5.md. HC-S7 (deploy) is BLOCKED until BACKEND-API returns HC-S6-FIX; do not start it unprompted.
+
+<details><summary>Original brief, retained for history</summary>
 
 cd /path/to/nfl-prediction-app/04-FRONTEND
 
@@ -248,3 +250,5 @@ Show both with their `nearest_expressible` and `suggested_definition`. Do not co
 - A screenshot or description of a pre-filled question, showing how it differs from an answered one
 - Confirmation that a `reconsider` verdict still allows dispatch
 - Anything in the backend contract that made the UI awkward — that is signal about the API, and PROJECT-LEAD wants it
+
+</details>

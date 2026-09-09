@@ -155,7 +155,9 @@ Don't alert on:
 
 ---
 
-## 🔴 CURRENT TASK — INC-002: 2026 ingest is blocked, three days to kickoff (assigned by PROJECT-LEAD, 2026-09-07)
+## ✅ CLOSED — INC-002 (2026-09-07) — resolved 2026-09-08. Tasks 1-3 were carried out directly by PROJECT-LEAD with Matt at the console: image rebuilt, all 7 pipeline steps green, data verified fresh, alerting fixed and proven by a real email. Residual DEVOPS work is in the CURRENT TASK at the bottom of this file. See ../00-PROJECT-LEAD/INC-002-ingest-blocked-by-closing-line-gate.md.
+
+<details><summary>Original brief, retained for history</summary>
 
 cd /path/to/nfl-prediction-app/05-DEVOPS
 
@@ -234,3 +236,70 @@ Kill-switch — stop and escalate:
 - BigQuery freshness evidence: table, last_modified, row_count
 - What was actually wrong with the alerting, and proof a test alert arrived
 - Wall-clock time
+
+</details>
+
+---
+
+## 🔴 CURRENT TASK — DO-HARDEN: close the observability gaps INC-002 exposed (assigned 2026-09-09)
+
+cd /path/to/nfl-prediction-app/05-DEVOPS
+
+**Read `../00-PROJECT-LEAD/INC-002-ingest-blocked-by-closing-line-gate.md` first**, especially the closing sections. The urgent work is done; this is the "so it never takes a week to notice again" work.
+
+### Context
+
+The 2026 ingest was dead for 115 days and nobody knew, because every layer that should have said so was itself broken. Alerting is now fixed and proven by a real email — but three gaps remain, and one of them is the same class of blindness that caused the outage.
+
+### 1. The pre-container-failure blind spot — most important
+
+The alert watches `run.googleapis.com/job/completed_execution_count{result="failed"}`. During testing on 2026-09-08 a job failed at **container import** — bad image digest — and the console showed `0 Succeeded, 0 Failed, 0 Running` with **no tasks at all**. No task was created, no execution completed, nothing for the metric to count.
+
+So a job that dies from a bad image, a pull failure, a quota problem or a provisioning error is still invisible. That is precisely the shape of the original outage: the failure happened upstream of where the metric lives.
+
+Add a second condition — a log-based metric on `resource.type="cloud_run_job" AND severity=ERROR`, alerting on any occurrence — so a failure is caught regardless of how far the execution got. Terraform, in `infra/terraform/monitoring.tf`.
+
+### 2. The data-freshness check (SEASON_AUTOMATION_PLAN P4)
+
+Still unbuilt, and it is the single highest-value guard here. Assert that `MAX(last_modified)` across `raw_nflfastr.*` and `curated.*` is within N days during the season, alert if not.
+
+**It would have caught INC-002 on 2026-09-01**, six days before it was found. It also catches the failure mode neither job-level alert can see: a job that goes green and quietly does nothing. Between this and item 1, "the job broke" and "the job silently did nothing" are both covered.
+
+### 3. `/health` no longer reports a commit
+
+Since the 2026-09-08 API build it returns `"commit":"unknown"`; it previously reported `fc297ef`. The build did not inject a SHA.
+
+Small, but restore it. *"Which code is actually running"* is the exact question that took a week to answer during INC-002, when the pipeline image turned out to be four months old. Losing that signal on the API is a step backwards.
+
+### 4. Review PROJECT-LEAD's terraform edit
+
+On 2026-09-08, PROJECT-LEAD edited `infra/terraform/monitoring.tf` directly — outside the delegation boundary, at Matt's instruction. Two changes, both applied and working:
+
+- Added `trigger { count = 1 }` to both alert policies. Neither had one, so the API defaulted the trigger to zero and the console read *"0% of time series cross threshold"* — enabled, correct-looking, structurally unable to fire. **This is why no alert email had ever been delivered.**
+- Changed the job policy from `ALIGN_RATE`/`duration=60s` to `ALIGN_DELTA`/`duration=0s`, because a failed execution is a single counted event rather than a sustained state.
+
+Review both as you would a stranger's PR. Also note: that `terraform apply` reported **7 added, 4 changed** — the `dataset_processor` stack had been declared but never applied, so a service account and four IAM grants were created that nobody reviewed. Read them.
+
+### Scope
+
+In-scope: `05-DEVOPS/**`, monitoring, alerting, Cloud Build, Cloud Run config, `INCIDENTS.md`.
+Out-of-scope: application code in any other folder — spec it, do not write it. Your own instructions already say this.
+
+Kill-switch: any change needing an IAM or security-setting change gets written up for Matt to apply, as with the P0 fix. Do not apply those yourself.
+
+### Acceptance
+
+- [ ] Pre-container-failure alert added and **proven by a deliberate bad-image job**, not by reading config
+- [ ] Freshness check built, and proven by pointing it at a deliberately stale window
+- [ ] `/health` reports a real commit SHA again
+- [ ] Written verdict on PROJECT-LEAD's two monitoring.tf changes
+- [ ] The 7 unreviewed `dataset_processor` resources read and reported on
+- [ ] `INCIDENTS.md` updated
+
+### Escalation
+
+`INCIDENTS.md`, then stop.
+
+### Returns-with
+
+Proof each new alert fires — a real triggered incident, not a config diff. Configuration that looks correct is what hid this for four months.
