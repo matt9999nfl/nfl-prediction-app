@@ -47,7 +47,7 @@ game needs no migration.  They are backfilled by `--grade` once results land.
 Usage
 -----
     python backtests/predict_upcoming.py --season 2026 --week 1 --dry-run
-    python backtests/backtests/predict_upcoming.py --season 2026 --week 1
+    python backtests/predict_upcoming.py --season 2026 --week 1
     python backtests/predict_upcoming.py --season 2026 --week 1 --grade
 
 Requires GCP auth (GOOGLE_APPLICATION_CREDENTIALS or `gcloud auth
@@ -254,13 +254,14 @@ def generate_predictions(
 
     preds = test_df[
         ["game_id", "season", "week", "home_team", "away_team", "home_spread_close"]
-    ].copy()
+    ].copy().reset_index(drop=True)
     preds["predicted_home_cover_prob"] = probs
     preds["predicted_side"] = np.where(probs > 0.5, "home", "away")
-    preds["actual_home_covered"] = test_df["home_covered"].values
-    preds["correct"] = pd.Series([pd.NA] * len(preds), dtype="Int64")
+    preds["actual_home_covered"] = test_df["home_covered"].to_numpy()
+    # Unplayed games are ungraded by definition; --grade backfills this later.
+    preds["correct"] = pd.array([pd.NA] * len(preds), dtype="Int64")
     preds["ol_mismatch_flag"] = (
-        test_df["ol_mismatch_flag"].values if "ol_mismatch_flag" in test_df.columns else 0
+        test_df["ol_mismatch_flag"].to_numpy() if "ol_mismatch_flag" in test_df.columns else 0
     )
     preds["fold"] = 0
     preds = preds.sort_values("game_id").reset_index(drop=True)
