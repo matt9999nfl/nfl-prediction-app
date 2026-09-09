@@ -84,7 +84,7 @@ def get_predictions(
         raise HTTPException(
             status_code=404,
             detail={
-                "error": "No gate-passed experiment found",
+                "error": "No production experiment available",
                 "code": "no_production_experiment",
                 "request_id": request_id,
             },
@@ -115,5 +115,6 @@ def get_predictions(
         season=season,
         week=week,
         generated_at=completed_at,
+        gate_passed=bool(prod_exp.get("gate_passed", False)),
         data=predictions,
     )

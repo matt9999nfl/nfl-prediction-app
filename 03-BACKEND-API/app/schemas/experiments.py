@@ -213,10 +213,18 @@ class ProductionPredictionItem(BaseModel):
 
 
 class ProductionPredictionsResponse(BaseModel):
-    """Response for GET /api/v1/predictions?season=N&week=N."""
+    """Response for GET /api/v1/predictions?season=N&week=N.
+
+    ``gate_passed`` is REQUIRED and has no default on purpose.  These predictions
+    may come from a model that has not cleared any success threshold (DEC-C), and
+    a client must not be able to render them without being told which kind it
+    received.  A default of False would be safer than True, but any default at
+    all lets the field be forgotten silently — so there is none.
+    """
     experiment_id: str
     experiment_name: str
     season: int
     week: int
     generated_at: str              # ISO 8601 — completed_at from backtest_runs
+    gate_passed: bool              # False => show the evaluation banner
     data: list[ProductionPredictionItem]

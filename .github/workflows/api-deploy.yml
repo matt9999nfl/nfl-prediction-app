@@ -52,13 +52,14 @@ jobs:
           docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit
           docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Deploy to Cloud Run (traffic at 0%)
+      - name: Deploy to Cloud Run (no traffic, tagged "candidate")
         run: |
           git_commit=$(git rev-parse --short HEAD)
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit \
             --region ${{ env.REGION }} \
             --no-traffic \
+            --tag candidate \
             --max-instances 3 \
             --memory 512Mi \
             --cpu 1 \
@@ -66,57 +67,65 @@ jobs:
             --concurrency 80 \
             --set-env-vars=BIGQUERY_PROJECT=${{ env.PROJECT_ID }}
 
-      - name: Get new revision URL
+      # A revision has no addressable URL of its own, so the previous
+      # `gcloud run revisions describe --format='value(status.url)'` returned an
+      # empty string and every smoke test below it curled nothing for 60s.
+      # The --tag above gives the new revision a real, traffic-free URL; this
+      # reads it back out of the service's traffic block.
+      - name: Resolve candidate URL
         id: revision
         run: |
           revision=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
             --region ${{ env.REGION }} \
-            --format='value(status.latestReadyRevisionName)')
-          url=$(gcloud run revisions describe $revision \
-            --region ${{ env.REGION }} \
-            --format='value(status.url)')
+            --format='value(status.latestCreatedRevisionName)')
+          url=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} --format=json \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((t.get('url','') for t in d.get('status',{}).get('traffic',[]) if t.get('tag')=='candidate'), ''))")
+          if [ -z "$url" ]; then
+            echo "::error::Could not resolve the candidate revision URL — refusing to shift traffic untested."
+            exit 1
+          fi
+          echo "Candidate revision: $revision"
+          echo "Candidate URL:      $url"
           echo "revision=$revision" >> $GITHUB_OUTPUT
           echo "url=$url" >> $GITHUB_OUTPUT
 
+      # NOTE: this step used to test `steps.smoke-test.outputs.smoke_test_passed`
+      # — its own output — inside itself.  Expressions are interpolated before
+      # the step runs, so that was always the empty string and the guard below
+      # fired `exit 1` on every run, including runs where /health returned 200.
+      # The result was a deploy workflow that could never shift traffic.
+      # A plain shell variable cannot have that problem.
       - name: Smoke test
-        id: smoke-test
         run: |
           url="${{ steps.revision.outputs.url }}"
-          echo "Testing $url/health"
-          
-          for i in {1..30}; do
-            response=$(curl -s -w "\n%{http_code}" "$url/health")
-            http_code=$(echo "$response" | tail -n1)
-            body=$(echo "$response" | head -n-1)
-            
-            if [ "$http_code" = "200" ]; then
-              echo "✓ Health check passed: $body"
-              echo "smoke_test_passed=true" >> $GITHUB_OUTPUT
+          passed=""
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /tmp/health.json -w "%{http_code}" "$url/health" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Health check passed: $(cat /tmp/health.json)"
+              passed=yes
               break
             fi
-            
-            if [ $i -lt 30 ]; then
-              echo "Attempt $i/30: HTTP $http_code, retrying in 2s..."
-              sleep 2
-            fi
+            echo "Attempt $i/30: HTTP $code, retrying in 2s..."
+            sleep 2
           done
-          
-          if [ -z "${{ steps.smoke-test.outputs.smoke_test_passed }}" ]; then
-            echo "❌ Smoke test failed: /health not responding with 200"
+          if [ -z "$passed" ]; then
+            echo "::error::Smoke test failed — /health never returned 200 on the candidate revision."
             exit 1
           fi
 
       - name: Test additional endpoints
         run: |
           url="${{ steps.revision.outputs.url }}"
-          
-          echo "Testing /api/v1/experiments..."
-          curl -s "$url/api/v1/experiments?limit=5" | grep -q '"data"' || exit 1
-          
-          echo "Testing /api/v1/features..."
-          curl -s "$url/api/v1/features" | grep -q '"data"' || exit 1
-          
-          echo "✓ All smoke tests passed"
+          for path in "/api/v1/experiments?limit=5" "/api/v1/features"; do
+            echo "Testing $path ..."
+            curl -sf "$url$path" | grep -q '"data"' || {
+              echo "::error::Endpoint check failed: $path"
+              exit 1
+            }
+          done
+          echo "All endpoint checks passed"
 
       - name: Shift traffic to new revision
         run: |
@@ -124,11 +133,26 @@ jobs:
             --region ${{ env.REGION }} \
             --to-revisions=LATEST=100
 
+      # Verify against the SERVICE url (what users hit), not the candidate tag —
+      # the candidate URL would answer 200 whether or not traffic actually moved.
+      # Also assert /health reports the commit we just built: the question
+      # "which code is actually running?" took a week to answer during INC-002.
       - name: Verify traffic shift
         run: |
-          url="${{ steps.revision.outputs.url }}"
-          curl -s "$url/health" | grep -q '"status".*"ok"' || exit 1
-          echo "✓ Traffic shift verified"
+          git_commit=$(git rev-parse --short HEAD)
+          service_url=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} --format='value(status.url)')
+          body=$(curl -s "$service_url/health")
+          echo "Service /health: $body"
+          echo "$body" | grep -q '"status":"ok"' || {
+            echo "::error::Service /health did not report ok after the traffic shift."
+            exit 1
+          }
+          echo "$body" | grep -q "\"commit\":\"$git_commit\"" || {
+            echo "::error::Service is not reporting commit $git_commit — traffic may not have shifted."
+            exit 1
+          }
+          echo "Traffic shift verified — serving $git_commit"
 
       - name: Send success notification
         if: success()

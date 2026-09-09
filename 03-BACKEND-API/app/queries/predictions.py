@@ -41,48 +41,87 @@ def get_production_experiment(
     experiment_id_override: str | None = None,
 ) -> dict[str, Any] | None:
     """
-    Find the production experiment (most recent gate-passed run).
+    Resolve the experiment that serves production predictions.
 
-    If experiment_id_override is provided, fetch that specific experiment and
-    verify it has gate_passed = true. Return None if not gate-passed or not found.
+    Selection order:
 
-    Returns a dict with: experiment_id, run_id, completed_at, experiment_name
+      1. ``experiment_id_override``, if given.  Honoured only when that
+         experiment is gate-passed OR is the configured production experiment —
+         so the endpoint cannot be pointed at an arbitrary run (the shuffled-label
+         leakage test, say) by editing a query string.
+      2. The most recent gate-passed experiment.  If one ever exists it wins,
+         because a validated model should always outrank an unvalidated one.
+      3. The configured production experiment (``PRODUCTION_EXPERIMENT_ID``),
+         ungated.
+
+    Step 3 is what makes forward predictions servable at all.  No experiment has
+    cleared its success gate, so requiring gate_passed meant this endpoint could
+    never return anything — the structural block DEC-C identified.  DEC-C ruled
+    that gate-passing is not a prerequisite for emitting a prediction, provided
+    the app never presents it as validated.  Hence the returned dict always
+    carries ``gate_passed``, and the response model requires it: the UI is told
+    what it is serving rather than trusted to remember.
+
+    Returns a dict with: experiment_id, run_id, completed_at, experiment_name,
+    gate_passed.  None if nothing is servable.
     """
+    select_clause = """
+            SELECT
+              r.experiment_id,
+              r.run_id,
+              FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', r.completed_at) AS completed_at,
+              c.name AS experiment_name,
+              COALESCE(r.gate_passed, false) AS gate_passed
+            FROM `{project}.experiments.backtest_runs` r
+            JOIN `{project}.platform.experiment_configs` c
+              ON r.experiment_id = c.experiment_id
+    """.format(project=PROJECT)
+
+    production_id = getattr(settings, "production_experiment_id", "") or ""
+
     if experiment_id_override:
         query = f"""
-            SELECT
-              r.experiment_id,
-              r.run_id,
-              FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', r.completed_at) AS completed_at,
-              c.name AS experiment_name
-            FROM `{PROJECT}.experiments.backtest_runs` r
-            JOIN `{PROJECT}.platform.experiment_configs` c
-              ON r.experiment_id = c.experiment_id
+            {select_clause}
             WHERE r.experiment_id = @experiment_id
-              AND r.gate_passed = true
-              AND c.gate_passed = true
+              AND (
+                    (r.gate_passed = true AND c.gate_passed = true)
+                 OR (@production_id != '' AND r.experiment_id = @production_id)
+              )
             ORDER BY r.completed_at DESC
             LIMIT 1
         """
-        params = [bigquery.ScalarQueryParameter("experiment_id", "STRING", experiment_id_override)]
-    else:
-        query = f"""
-            SELECT
-              r.experiment_id,
-              r.run_id,
-              FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', r.completed_at) AS completed_at,
-              c.name AS experiment_name
-            FROM `{PROJECT}.experiments.backtest_runs` r
-            JOIN `{PROJECT}.platform.experiment_configs` c
-              ON r.experiment_id = c.experiment_id
-            WHERE r.gate_passed = true
-              AND c.gate_passed = true
-            ORDER BY r.completed_at DESC
-            LIMIT 1
-        """
-        params = []
+        params = [
+            bigquery.ScalarQueryParameter("experiment_id", "STRING", experiment_id_override),
+            bigquery.ScalarQueryParameter("production_id", "STRING", production_id),
+        ]
+        rows = _run_query(client, query, params)
+        return rows[0] if rows else None
 
-    rows = _run_query(client, query, params)
+    # A gate-passed experiment always wins if one exists.
+    gated_query = f"""
+        {select_clause}
+        WHERE r.gate_passed = true
+          AND c.gate_passed = true
+        ORDER BY r.completed_at DESC
+        LIMIT 1
+    """
+    rows = _run_query(client, gated_query, [])
+    if rows:
+        return rows[0]
+
+    if not production_id:
+        return None
+
+    # Fall back to the designated production experiment, ungated.
+    production_query = f"""
+        {select_clause}
+        WHERE r.experiment_id = @production_id
+          AND r.status = 'complete'
+        ORDER BY r.completed_at DESC
+        LIMIT 1
+    """
+    params = [bigquery.ScalarQueryParameter("production_id", "STRING", production_id)]
+    rows = _run_query(client, production_query, params)
     return rows[0] if rows else None
 
 

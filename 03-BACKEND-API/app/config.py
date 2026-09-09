@@ -24,6 +24,21 @@ class Settings:
     owner_api_key: str | None = (os.getenv("OWNER_API_KEY") or "").strip() or None  # Phase 3
     default_season: int = _get_current_nfl_season()
 
+    # ── Production forward predictions (DEC-A / DEC-C) ────────────────────────
+    #
+    # The designated experiment that serves GET /api/v1/predictions for upcoming
+    # games.  This exists because no experiment has ever cleared its success
+    # gate, and DEC-C ruled that gate-passing is NOT a prerequisite for emitting
+    # a forward prediction — but the honest-evaluation banner IS.  So the
+    # endpoint may serve this experiment ungated, and reports gate_passed
+    # truthfully in the response so the UI cannot present it as validated.
+    #
+    # Set to "" to disable ungated serving entirely and require a gate-passed
+    # experiment, which is the original Phase 3 behaviour.
+    production_experiment_id: str = os.getenv(
+        "PRODUCTION_EXPERIMENT_ID", "00000000-0000-4000-8000-00000000f0re"
+    ).strip()
+
     # ── Claude API (Step 5 — schema inference) ────────────────────────────────
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     # Fast, capable model for structured JSON inference tasks.
