@@ -7,8 +7,9 @@
 
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useGames, useExperiments } from '@/api/queries'
+import { useGames, useExperiments, useProductionPredictions } from '@/api/queries'
 import { GameCard } from '@/components/GameCard'
+import { EvaluationBanner } from '@/components/EvaluationBanner'
 import { LoadingCards } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { EmptyState } from '@/components/EmptyState'
@@ -50,6 +51,28 @@ export function DashboardPage() {
     }
     return [...map.entries()].sort(([a], [b]) => a - b)
   }, [games])
+
+  // Predictions are generated one week at a time, so only the nearest
+  // scheduled week has any. Later weeks render without picks rather than
+  // showing a stale or invented number.
+  const upcomingWeek = gamesByWeek.length > 0 ? gamesByWeek[0][0] : undefined
+
+  const { data: predictionsData } = useProductionPredictions(
+    CURRENT_SEASON,
+    upcomingWeek,
+  )
+
+  const predictionsByGameId = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof predictionsData>['data'][number]>()
+    for (const p of predictionsData?.data ?? []) map.set(p.game_id, p)
+    return map
+  }, [predictionsData])
+
+  // Show the banner whenever picks are on screen and nothing has cleared a
+  // gate. Keyed off the served response, not off a local assumption, so the
+  // day an experiment does pass its gate the banner disappears on its own.
+  const showEvaluationBanner =
+    predictionsData !== undefined && predictionsData.gate_passed === false
 
   return (
     <div className="space-y-8">
@@ -112,12 +135,18 @@ export function DashboardPage() {
         />
       )}
 
+      {showEvaluationBanner && <EvaluationBanner />}
+
       {!gamesLoading && !gamesError && gamesByWeek.map(([week, weekGames]) => (
         <section key={week}>
           <h2 className="text-base font-semibold mb-3">Week {week}</h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {weekGames.map((game) => (
-              <GameCard key={game.game_id} game={game} />
+              <GameCard
+                key={game.game_id}
+                game={game}
+                prediction={predictionsByGameId.get(game.game_id)}
+              />
             ))}
           </div>
         </section>

@@ -32,6 +32,7 @@ import type {
   RunExperimentResponse,
   ExperimentRunStatus,
   Prediction,
+  ProductionPredictionsResponse,
   CreateExperimentPayload,
   Framework,
   CreateFrameworkPayload,
@@ -82,6 +83,30 @@ export function useGame(gameId: string) {
     queryFn: () => api.get<GameDetail>(`/api/v1/games/${gameId}`),
     staleTime: 60_000,
     enabled: Boolean(gameId),
+  })
+}
+
+/**
+ * Production predictions for one week.
+ *
+ * Returns 404 with code `no_production_experiment` when nothing is servable,
+ * which is a normal state rather than an error — the dashboard renders games
+ * without picks in that case, so the query does not retry on it.
+ */
+export function useProductionPredictions(
+  season: number,
+  week: number | undefined,
+) {
+  return useQuery<ProductionPredictionsResponse>({
+    queryKey: ['predictions', season, week],
+    queryFn: () =>
+      api.get<ProductionPredictionsResponse>('/api/v1/predictions', {
+        season,
+        week: week as number,
+      }),
+    enabled: week !== undefined,
+    staleTime: 60_000,
+    retry: false,
   })
 }
 

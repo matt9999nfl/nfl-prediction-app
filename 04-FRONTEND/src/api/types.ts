@@ -283,6 +283,24 @@ export interface Prediction {
   confidence_tier: 'high' | 'medium' | 'low'
 }
 
+/**
+ * GET /api/v1/predictions — predictions for an upcoming (or past) week.
+ *
+ * `gate_passed` is required, not optional, and mirrors the backend schema
+ * deliberately: these predictions may come from a model that has cleared no
+ * success threshold (DEC-C), and the UI must not be able to render them
+ * without deciding what to do about that. See EvaluationBanner.
+ */
+export interface ProductionPredictionsResponse {
+  experiment_id: string
+  experiment_name: string
+  season: number
+  week: number
+  generated_at: string
+  gate_passed: boolean
+  data: Prediction[]
+}
+
 export type CreateExperimentPayload = Omit<
   ExperimentConfig,
   'experiment_id' | 'created_at' | 'status' | 'gate_passed'
