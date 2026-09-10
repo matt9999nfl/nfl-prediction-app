@@ -39,10 +39,18 @@ export function GateBadge({ gatePassed }: GateBadgeProps) {
 }
 
 interface ConfidenceBadgeProps {
-  tier: 'high' | 'medium' | 'low'
+  /**
+   * Nullable on purpose. This component previously required a tier, called
+   * tier.charAt(0) on it, and the API returned null for every prediction —
+   * which threw during render and blanked the entire dashboard, because a
+   * thrown error unmounts the React tree and there is no error boundary above
+   * this. Rendering nothing is the correct answer to "no tier".
+   */
+  tier: 'high' | 'medium' | 'low' | null | undefined
 }
 
 export function ConfidenceBadge({ tier }: ConfidenceBadgeProps) {
+  if (!tier) return null
   const v = tier === 'high' ? 'success' : tier === 'medium' ? 'info' : 'muted'
   return (
     <Badge variant={v as Parameters<typeof Badge>[0]['variant']}>

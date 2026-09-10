@@ -148,7 +148,20 @@ def get_production_predictions(
           predicted_home_cover_prob,
           predicted_side,
           actual_home_covered,
-          correct
+          correct,
+          -- confidence_tier is part of the API contract and the response schema,
+          -- but was never selected here, so it was null on every prediction ever
+          -- served. The frontend's ConfidenceBadge called tier.charAt(0) on it
+          -- and took the whole dashboard down with a white screen the moment
+          -- predictions started being returned.
+          --
+          -- Distance from a coin flip, not raw probability: 0.55 and 0.45 are
+          -- equally confident calls in opposite directions.
+          CASE
+            WHEN ABS(predicted_home_cover_prob - 0.5) >= 0.10 THEN 'high'
+            WHEN ABS(predicted_home_cover_prob - 0.5) >= 0.05 THEN 'medium'
+            ELSE 'low'
+          END AS confidence_tier
         FROM `{PROJECT}.experiments.backtest_predictions`
         WHERE experiment_id = @experiment_id
           AND season = @season

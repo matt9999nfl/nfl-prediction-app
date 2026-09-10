@@ -24,7 +24,30 @@ XGB_PARAMS_V2 = dict(
     reg_lambda=1.0,
     eval_metric="logloss",
     random_state=42,
-    n_jobs=-1,
+    # n_jobs is pinned to 1, NOT -1.
+    #
+    # With n_jobs=-1 XGBoost uses every available core, and its histogram
+    # builder sums gradients in thread-completion order. A different core count
+    # therefore changes floating-point rounding, which changes split points,
+    # which compounds over 300 boosting rounds. Observed 2026-09-10: identical
+    # code, identical BigQuery data and random_state=42 produced different
+    # probabilities on a 12-core laptop than on a 2-core Cloud Run job — all 16
+    # week-1 games differed, by up to 0.042, and two picks flipped sides. Two
+    # runs on the SAME machine matched exactly, which is what made it look like
+    # a library problem rather than a threading one.
+    #
+    # random_state does not protect against this: it seeds sampling, not thread
+    # scheduling.
+    #
+    # This platform exists to measure whether a model has an edge. A backtest
+    # whose result depends on the core count of the machine that ran it is not
+    # measuring the model. Single-threaded costs about a second on 2,822 rows —
+    # nothing against reproducibility.
+    #
+    # tree_method is stated explicitly for the same reason: leaving it to the
+    # default means the algorithm can change under an XGBoost upgrade.
+    n_jobs=1,
+    tree_method="hist",
 )
 
 

@@ -280,7 +280,11 @@ export interface Prediction {
   predicted_side: 'home' | 'away'
   actual_home_covered: boolean | null
   correct: number | null
-  confidence_tier: 'high' | 'medium' | 'low'
+  /**
+   * Null for older rows. The type said non-null while the API returned null on
+   * every prediction, so `tsc` passed and the dashboard crashed at runtime.
+   */
+  confidence_tier: 'high' | 'medium' | 'low' | null
 }
 
 /**

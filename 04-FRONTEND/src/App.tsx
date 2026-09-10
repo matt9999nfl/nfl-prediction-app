@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { GameDetailPage } from '@/pages/GameDetailPage'
 import { ModelPage } from '@/pages/ModelPage'
@@ -16,6 +17,7 @@ import { TeamPage } from '@/pages/TeamPage'
 export default function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<DashboardPage />} />
@@ -35,6 +37,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }
