@@ -1,8 +1,32 @@
-google-cloud-bigquery>=3.41.0
-db-dtypes>=1.5.1
-pandas>=1.5.3
-pyarrow>=12.0.1
-numpy>=1.24.0
-scikit-learn>=1.3.0
-xgboost>=2.0.0
-matplotlib>=3.7.0
+# Pinned deliberately. Do not relax to >= without re-verifying predictions.
+#
+# On 2026-09-10 this file used >= for everything. A rebuild of the job image
+# resolved pandas 3.0.5 and numpy 2.4.6, while every prediction ever verified by
+# hand had been produced on pandas 1.5.3 / numpy 1.26.4. The same code, the same
+# BigQuery data and the same seed (random_state=42) then produced DIFFERENT
+# predictions in the two environments — two of sixteen week-1 picks flipped
+# sides (ATL@PIT and BAL@IND).
+#
+# XGBoost is deterministic given identical inputs, so the feature matrix itself
+# differed. pandas 3.0 changes NaN handling, groupby/cumsum behaviour and makes
+# copy-on-write the default; the feature builders lean on all three.
+#
+# This matters more here than in most projects. The platform exists to measure
+# whether a model has an edge. A backtest that cannot be reproduced in the
+# environment that serves predictions measures the library stack as much as the
+# model, and RUN.md's promise that "given the same experiment_id, re-running
+# produces identical results" is only true if this file is pinned.
+#
+# These versions are the ones week-1 predictions were verified against by hand.
+# To upgrade: change one pin, rebuild, re-run predict_upcoming for a week that
+# already has stored predictions, and diff the probabilities. If they move, the
+# upgrade is a modelling change and needs to be treated as one.
+
+google-cloud-bigquery==3.41.0
+db-dtypes==1.5.1
+pandas==1.5.3
+pyarrow==14.0.1
+numpy==1.26.4
+scikit-learn==1.9.0
+xgboost==3.2.0
+matplotlib==3.10.9
