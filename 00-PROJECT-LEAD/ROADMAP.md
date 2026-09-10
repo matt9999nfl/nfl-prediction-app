@@ -1,274 +1,240 @@
 # ROADMAP — NFL Prediction App
 
-**Owner:** PROJECT-LEAD  
-**Last updated:** 2026-08-31  
-**Status:** Phase 5 complete (three visual verifications outstanding — see `DELEGATIONS.md`). Phase 6 Hypothesis Chat active.
+**Owner:** PROJECT-LEAD
+**Last updated:** 2026-09-10
+**Framing:** Read `PROJECT-CHARTER.md` first. This is a **platform-building
+project**; modelling happens later, through the platform. This document does not
+restate that — it assumes it.
+
+**Current status:** Phases 1–5 complete. **Phase 7 (In-Season Operations) is
+active** and, as of 2026-09-10, live. Phase 6 (Hypothesis Chat) is built but
+undeployed, blocked behind the season freeze.
+
+> **Rewritten 2026-09-10.** The previous version claimed three different things
+> at once: the header said "Phase 5 complete / Phase 6 active", the phase table
+> said Phase 4 ✅ Complete, and the Phase 4 section said "🔄 IN PLANNING, not yet
+> started". It also predated INC-002 and the 2026-09-09/10 sprint entirely. It is
+> the first document a cold session reads, which made it the most expensive stale
+> document in the repo. Historical phase detail has been compressed to summaries;
+> the full records live in the phase status documents named below.
 
 ---
 
-## Phase Overview
+## Phase overview
 
 | Phase | Name | Gate | Status |
 |-------|------|------|--------|
-| 1 | Foundation & Validation | Infrastructure built, pipeline validated | ✅ Complete |
-| 2 | Service Layer | Full self-service platform built | ✅ Complete |
-| 3 | Productionize | App deployed and running in GCP | ✅ Complete |
-| 4 | Validation & Improvements | App does what it says; results are trustworthy | ✅ Complete |
-| 5 | Polish Sprint | App is camera-ready for public launch | ✅ Complete |
-| 6 | Hypothesis Chat | Matt states a hypothesis in prose and the platform scopes, briefs and runs it | 🔄 Active |
+| 1 | Foundation & Validation | Infrastructure built, pipeline validated | ✅ Complete 2026-05-03 |
+| 2 | Service Layer | Full self-service platform built | ✅ Complete 2026-05-06 |
+| 3 | Productionize | App deployed and running in GCP | ✅ Complete 2026-05-07 |
+| 4 | Validation & Improvements | App does what it says; results are trustworthy | ✅ Complete 2026-05-17 |
+| 5 | Polish Sprint | App is camera-ready for public launch | ✅ Complete 2026-05-24 |
+| 6 | Hypothesis Chat | A hypothesis stated in prose is scoped, briefed and run | 🟠 Built, **undeployed** |
+| 7 | **In-Season Operations** | The app predicts, serves and grades real upcoming games, unattended | 🔄 **ACTIVE — live** |
+
+**Live URLs**
+
+| Service | URL | Verified |
+|---------|-----|----------|
+| BACKEND-API | `https://nfl-backend-api-rmaehdhzhq-uc.a.run.app` | 2026-09-10, `commit: 3cbf12f` |
+| FRONTEND | `http://34.49.20.115` | 2026-09-10 |
 
 ---
 
-## Phase 1 — Foundation & Validation ✅ COMPLETE
+## Phase 7 — In-Season Operations 🔄 ACTIVE
 
-> **Historical record.** Phase 1 complete as of 2026-05-03.
+**Start date:** 2026-08-31 (DEC-A) · **First live:** 2026-09-10
+**Records:** `SPRINT-REVIEW-2026-09-10.md`, `REVIEW-2026-09-10.md`,
+`SESSION-HANDOFF-2026-09-09-PM.md` · **Decisions:** DEC-A, DEC-B, DEC-C in
+`PRE_SEASON_STATUS_2026-08-31.md` §3
 
-### What Was Built
+### What Phase 7 is
 
-- nflfastR play-by-play, schedules, and rosters loaded into BigQuery (`raw_nflfastr.*`, `curated.*`) for 2015–present
-- Closing lines sourced from nflverse `spread_line` field (0% null rate, confirmed as closing lines)
-- PR-001: `home_covered` sign convention fixed
-- Walk-forward experiment framework: 6-fold harness, leakage guards, BigQuery output to `experiments.*`
-- Two baseline experiments: ol_xgb_v1 (48.7% ATS), ol_xgb_v2 (49.6% ATS, 52 features)
-- OL mismatch subset defined
+The platform can run a backtest over completed seasons. Phase 7 is it doing the
+other thing: **producing, serving and grading a prediction for a game that has
+not been played yet**, on a schedule, without anyone watching.
 
-### Why Phase 2 Was Unlocked
+`PRE_SEASON_STATUS_2026-08-31.md` §2 stated the gap plainly: *"Nothing in the
+current plan produces a prediction for a 2026 game."* DEC-A made closing it an
+active project on 2026-08-31. It was not dispatched, and the capability was built
+under deadline on 2026-09-09/10 instead.
 
-The original 54% ATS gate was retired (ADR-006). Project goal is a self-service experimentation platform — Phase 1 completion means the infrastructure works and produces real experiments, not that a specific model hit a threshold.
+### What is built and live
 
----
+| Capability | Where | State |
+|---|---|---|
+| Forward prediction for unplayed games | `02-MODELING/backtests/predict_upcoming.py` | ✅ Live — 16 games, 2026 wk 1 |
+| Weekly grade-then-predict automation | `02-MODELING/backtests/run_production_refresh.py` | ✅ Live, Tue 14:00 UTC |
+| Ungated serving with honest banner | `03-BACKEND-API/app/queries/predictions.py` | ✅ Live, `gate_passed` served not assumed |
+| Manual refresh trigger | `POST /api/v1/predictions/refresh` + dashboard button | ✅ Live |
+| Deploy pipeline that actually shifts traffic | `.github/workflows/api-deploy.yml` | ✅ Fixed |
+| `/health` reports the running commit | `app/config.py` + `Dockerfile` | ✅ Live |
+| Cross-machine reproducibility | `models/ol_xgb.py`, `models/xgb_v2.py` — `n_jobs=1` | ✅ Fixed, max delta 2.8e-8 |
+| Market line change-log | `raw_lines.line_snapshots` | ✅ Shipped |
+| Frontend error boundary | `04-FRONTEND` route wrapper | ✅ Shipped |
 
-## Phase 2 — Service Layer ✅ COMPLETE
+### Phase 7 complete when
 
-> **Historical record.** Phase 2 complete as of 2026-05-06.
+- [x] A prediction exists for an unplayed 2026 game and is served by the API
+- [x] The dashboard renders it, with the honest-evaluation banner driven by served data
+- [x] Deploys shift traffic and the running commit is identifiable
+- [x] The same numbers are produced on any machine
+- [ ] **The weekly job completes an unattended grade-then-predict transition** — first attempt Tue 15 Sep. Verified only on a week-1 predict so far.
+- [ ] CI runs the test suite before a deploy reaches production
+- [ ] A week's picks are graded and the running record is visible in the app
 
-### What Was Built
+### Known open items
 
-**DATA-PIPELINE** — `platform.*` BigQuery tables, `user_datasets` dataset, experiment config columns. 58/58 validation checks passed.
+Full list and ordering in `REVIEW-2026-09-10.md` §6. The blocking ones:
 
-**BACKEND-API** — Full REST API: games, experiments, predictions, datasets, frameworks, features endpoints. Dataset upload flow. Experiment config + Cloud Run Job trigger. Claude API schema inference.
-
-**MODELING** — Config-driven runner (`backtests/run_experiment.py`). Dynamic feature matrix from curated catalog + user dataset joins. Walk-forward with config-derived folds. BigQuery writes for all Phase 2 fields. Feature importance captured.
-
-**FRONTEND** — All pages built: dashboard, game detail, datasets, experiment wizard, experiment results, model page, frameworks, about. Honest evaluation banner until `gate_passed = true`.
-
----
-
-## Phase 3 — Productionize ✅ COMPLETE
-
-> **Historical record.** Phase 3 complete as of 2026-05-07.
-
-### What Was Built
-
-**DEVOPS** — Full GCP deployment via Terraform: Cloud Run service (API), Cloud CDN + GCS (frontend), Cloud Run Jobs (experiment runner + data pipeline), Cloud Scheduler (weekly ingest + production refresh), monitoring alerts + runbooks. CI/CD pipelines for API and frontend deploys.
-
-**TESTING-QA** — Integration test suite: pipeline→curated schema tests, no-lookahead data quality tests, runner→BQ write tests, API contract tests, license filtering tests, end-to-end experiment run tests. CI tier documentation.
-
-**BACKEND-API** — `GET /api/v1/predictions?season=N&week=N` endpoint for game-card prediction overlays.
-
-**MODELING** — join-key fix (`_resolve_dataset_join_info`), feature importance scores to BigQuery, `run_production_refresh.py` wrapper.
-
-### Deployment URLs
-
-| Service | URL |
-|---------|-----|
-| BACKEND-API | https://nfl-backend-api-rmaehdhzhq-uc.a.run.app |
-| FRONTEND | http://34.49.20.115 |
-
-### What Didn't Make Phase 3
-
-| Item | Deferred to |
-|------|-------------|
-| Dataset upload background task → Cloud Run Job | Phase 4 (DEVOPS) |
-| `/teams/:team` OL rating time series page | Phase 4 (FRONTEND) |
-| Feature importance display in experiment results | Phase 4 (FRONTEND + BACKEND-API) |
+1. Backend tests cannot run without GCP credentials — gates everything below
+2. CI never runs the 91 existing tests
+3. Traffic shifts to `LATEST`, not the smoke-tested revision
+4. `require_api_key` fails open when `OWNER_API_KEY` is absent
+5. Terraform and CI both declare the Cloud Run service spec
+6. The retired 54% gate is still written into the database on every run
+7. No frontend test framework exists
 
 ---
 
-## Phase 4 — Validation & Improvements 🔄 IN PLANNING
+## Phase 6 — Hypothesis Chat 🟠 BUILT, UNDEPLOYED
 
-**Start date:** 2026-05-16  
-**Status:** Plan written, not yet started. Awaiting project owner review before agents are engaged.  
-**Tracking:** `PHASE4_STATUS.md`
+**Start date:** 2026-08-31 · **Plan:** `HYPOTHESIS-CHAT-BUILD-PLAN.md` ·
+**Phase 1 record:** `HYPOTHESIS-CHAT-BRAINSTORM.md` · **Tracking:**
+`DELEGATIONS.md` · **Decision:** ADR-012
 
-### What Phase 4 Is
+A page where Matt types a hypothesis in plain English, answers a fixed sequence
+of scoping questions while a governor layer challenges whether the experiment is
+worth running, approves a brief rendered from the exact `ExperimentConfig` that
+will execute, and has the existing runner run it — producing an experiment
+indistinguishable in `experiments.*` from a wizard-built one. A hypothesis the
+platform cannot currently express ends in a written capability-gap record rather
+than a workaround. Single user. Not public.
 
-Phases 1–3 built and shipped the app. Phase 4 is about making it trustworthy and genuinely useful. The app is live, the pipeline runs, and users can configure and trigger experiments — but two things are not yet true:
+**The constraint that shapes it:** the chat is a *client of the write API that
+already exists* — `POST /api/v1/experiments` and
+`POST /api/v1/experiments/{id}/runs`. It holds no BigQuery credential and cannot
+execute SQL or generated code, so ADR-011 is enforced by an absent capability
+rather than by a rule. The runner is unmodified; MODELING has no work in this
+phase.
 
-1. **The results shown can't yet be fully trusted.** The experiment runner has no leakage-detection tooling, no reproducibility controls (hardcoded random seed), and the UI shows only aggregate hit rates with no per-fold breakdown. A user looking at a result like "58.3% ATS" has no way to tell whether it's real, noisy, or an artifact.
+**Build order:** stages 0–7 (declared question tree → tables → deterministic core
+→ extractor → governor → frontend → tests → deploy). Stage 2 is load-bearing:
+after it the feature works end to end with no model in the loop, so stages 3–4
+are enhancement rather than completion.
 
-2. **The usability is incomplete.** Feature importance isn't displayed in the UI. The per-fold chart on the experiment results page may not be receiving fold-level data from the API. There's no way to compare two experiments side by side. There's no team-level OL rating history page.
-
-Phase 4 fixes both. It is not about adding new model types or new data sources — that is Phase 5 territory. It is about what we already have working correctly and being presented clearly.
-
-### Phase 4 Scope
-
-**Track 1 — Model Validation (does the rushing feature result hold up?)**  
-The immediate trigger for Phase 4. Three experiments using 10 rushing features reported 58–61% ATS — a result that contradicts the May 3 baseline (49.65%). Before the app displays this as a meaningful result, it must be verified. Full investigation plan in `RUSH_VALIDATION_PLAN.md`.
-
-**Track 2 — Experiment Runner Improvements (reproducibility and trust tooling)**  
-- Configurable random seed via experiment config (currently hardcoded at 42)
-- Shuffle-labels mode for leakage detection (currently impossible without ad hoc code edits)
-- Standalone analysis script: per-spread-size slice, calibration plot, permutation feature importance
-- Standalone comparison script: side-by-side experiment comparison
-
-**Track 3 — App Usability Improvements (surfacing what's already computed)**  
-- Per-fold hit rate breakdown surfaced via API and rendered in the experiment results UI
-- Feature importance scores displayed on the experiment results page
-- `/teams/:team` OL rating time series page
-- Dataset upload background task moved to Cloud Run Job (completing the deferred Phase 3 item)
-
-### Phase 4 Agent Engagement Order
-
-Track 2 (runner improvements) and Track 3 (UI/API) can run in parallel once the Phase 4 plan is approved. Track 1 (validation) gates on Track 2's code changes being available first.
-
-| Order | Agent | Work | Unblocks |
-|-------|-------|------|----------|
-| 1 | MODELING | Track 2 code changes (seed, shuffle, analysis scripts) | Track 1 investigation |
-| 1 (parallel) | BACKEND-API | Per-fold data in experiment detail endpoint; feature importance endpoint | FRONTEND Track 3 |
-| 2 | MODELING | Track 1 Tier 1 investigation (A1, A2, A3) | PROJECT-LEAD Go/No-Go |
-| 2 (parallel) | FRONTEND | Per-fold chart fix, feature importance display, `/teams/:team` | — |
-| 2 (parallel) | DEVOPS | Dataset upload Cloud Run Job | — |
-| 3 | PROJECT-LEAD | Tier 1 Go/No-Go decision | Track 1 Tier 2 |
-| 4 | MODELING | Track 1 Tier 2 investigation (A4–A7) | Track 1 Tier 3 / gate review |
-| 5 | PROJECT-LEAD | Formal gate review on validated experiment | Retire honest-eval banner for that experiment |
-
-### Phase 4 Complete When
-
-- At least one experiment has passed the full Tier 1 + Tier 2 validation process and received a formal gate review
-- Experiment runner supports configurable seeds and shuffle-labels testing
-- Per-fold hit rate breakdown is visible in the experiment results UI (not just the aggregate)
-- Feature importance is displayed on the experiment results page
-- The honest-evaluation banner is retired for at least one gate-passed experiment
-- All Phase 3 deferred items are resolved (dataset upload job, `/teams/:team` page)
+**Status:** HC-S6-FIX accepted 13/13. `HC-S6-FIX-2`, `HC-S6-CLEANUP`, `DO-HARDEN`
+and `HC-S7` are on the board in `DELEGATIONS.md`. **Nothing is deployed** — the
+scoping backend live at `nfl-backend-api-00024-kw7` is behind the repo, and the
+deploy is held behind the season freeze (`REVIEW-2026-09-10.md` §0).
 
 ---
 
-## Phase 5 — Polish Sprint 🔄 ACTIVE
+## Completed phases — summary record
 
-**Start date:** 2026-05-23  
-**Status:** In progress. Triggered by a full live walkthrough of the deployed app (http://34.49.20.115) on 2026-05-23.  
-**Tracking:** `PHASE5_STATUS.md`
+Detail is preserved in the status documents. Do not re-derive it from here.
 
-### What Phase 5 Is
+### Phase 1 — Foundation & Validation ✅ 2026-05-03
+**Detail:** `GATE_REVIEW_PHASE1.md`, `docs/MODELING_SPEC_PHASE1.md`,
+`docs/PIPELINE_SPEC_PHASE1.md`
 
-A targeted bug-fix and polish sprint before the app is shown publicly as part of the "Predicting the Game" YouTube series. Every issue below was observed directly during a real user walkthrough — configure an experiment from scratch, run it, and navigate every page.
+nflfastR play-by-play, schedules and rosters loaded to BigQuery
+(`raw_nflfastr.*`, `curated.*`) for 2015–present. Closing lines from nflverse
+`spread_line`. PR-001 fixed the `home_covered` sign convention. Walk-forward
+experiment framework: 6-fold harness, leakage guards, BigQuery output to
+`experiments.*`. Two baselines: `ol_xgb_v1` (48.7% ATS), `ol_xgb_v2` (49.6%, 52
+features).
 
-### Issues Found
+**Phase 1 completed on infrastructure, not on a model result** — ADR-006 retired
+the original ≥54% ATS project gate the same day. See `PROJECT-CHARTER.md` §2.
 
-| # | Severity | Area | Description |
-|---|----------|------|-------------|
-| P5-01 | 🔴 Critical | FRONTEND | React Router routes are swapped. Navigating directly to `/experiments` renders the Dashboard. The Experiments nav link routes to `/model`. Any link shared externally lands on the wrong page. |
-| P5-02 | 🟠 High | FRONTEND | Experiment wizard Step 3 (Features): clicking checkboxes can trigger backwards navigation to Step 2. Reproducible when the Next/Back buttons are not fully visible in the viewport. |
-| P5-03 | 🟠 High | BACKEND-API + FRONTEND | Dataset stuck in `uploading` status since May 9 with no error fallback. Cloud Run Job failed silently; the status in `platform.datasets` was never updated to `error`. No retry, no dismissal, no error message for the user. |
-| P5-04 | 🟡 Medium | FRONTEND | Experiment wizard Step 5 (Methodology): `end_season` defaults to 2024. Data runs to 2025. Default should be 2025. |
-| P5-05 | 🟡 Medium | FRONTEND + BACKEND-API | Dashboard shows 0 completed experiments despite experiments existing in the system from Phase 4 work. |
-| P5-06 | 🟠 High | BACKEND-API | `latest_run` in `GET /api/v1/experiments/:id` response is missing the `per_fold` array. Frontend compensates by fetching predictions filtered to `season=2024`, showing only the most recent fold (F6, 272 games) instead of all 7 folds across 1,828 games. |
-| P5-07 | 🟠 High | BACKEND-API | `GET /api/v1/experiments/:id/feature-importance` returns 404. Endpoint not deployed or route not registered in the live Cloud Run service. Feature importance panel never renders. |
-| P5-08 | 🟡 Medium | FRONTEND | Experiment wizard shows "5 selected" but the runner automatically mirrors each home feature to its away counterpart, running 10 features total. The wizard should communicate this — e.g. "5 selected (10 with away mirrors)" — so users aren't surprised when results show double the features. |
+### Phase 2 — Service Layer ✅ 2026-05-06
+Full REST API (games, experiments, predictions, datasets, frameworks, features),
+dataset upload flow, Cloud Run Job trigger, Claude schema inference. Config-driven
+runner with a dynamic feature matrix. All frontend pages built, with the
+honest-evaluation banner. `platform.*` tables — 58/58 validation checks passed.
 
-### Fix Plan
+### Phase 3 — Productionize ✅ 2026-05-07
+**Detail:** `docs/DEVOPS_SPEC_PHASE3.md`, `docs/TESTING_QA_SPEC_PHASE3.md`,
+`PHASE3_STATUS.md`
 
-**FRONTEND** owns P5-01, P5-02, P5-04, and the display side of P5-05:
+Full GCP deployment via Terraform: Cloud Run service, Cloud CDN + GCS frontend,
+Cloud Run Jobs, Cloud Scheduler, monitoring, runbooks, CI/CD.
+`GET /api/v1/predictions` shipped. Integration test suite built.
 
-- P5-01: Audit `src/router` (or equivalent routing config). Correct the path-to-component mappings so `/experiments` → ExperimentsPage, `/model` → ModelPage. Verify all six nav links route to the correct URL and component.
-- P5-02: Investigate the Features step scroll/click interaction. Likely cause: a click on a low-positioned checkbox is being captured by an underlying Back button when the wizard card is partially scrolled. Fix hit targets or ensure Back/Next are outside the scrollable card.
-- P5-04: In the New Experiment wizard Step 5, change the `end_season` default from `2024` to `2025`.
-- P5-05 (display): Once the API correctly returns completed experiment counts, ensure the dashboard stat card re-fetches and renders correctly.
+*Retrospective note:* two Phase 3 deliverables looked complete and were not. The
+CI deploy could never shift traffic (fixed 2026-09-10) and both monitoring alert
+policies were silently unfirable (fixed during INC-002). Both were the same
+shape — configuration that is syntactically present and functionally inert.
 
-**BACKEND-API** owns P5-03, P5-05 (query), P5-06, and P5-07:
+### Phase 4 — Validation & Improvements ✅ 2026-05-17
+**Detail:** `PHASE4_STATUS.md`, `RUSH_VALIDATION_PLAN.md`,
+`RUSH_FEATURE_EXPERIMENTS_REVIEW.md`, `GATE_REVIEW_PHASE4_RUSH.md`,
+`INC-001-INVESTIGATION-REPORT.md`
 
-- P5-03: Add a timeout-based status reconciliation for datasets stuck in `uploading`. Any dataset in `uploading` state for more than 30 minutes should be flipped to `error` with a human-readable message. Implement either as a check on the `GET /api/v1/datasets/:id` endpoint (lazy reconciliation) or as a Cloud Scheduler job (proactive). Also add a `DELETE /api/v1/datasets/:id` endpoint so users can remove failed datasets.
-- P5-05 (query): Audit the `GET /api/v1/dashboard` (or equivalent) query. Confirm it is counting completed experiments from `experiments.backtest_runs` correctly and returning the right count to the frontend.
-- P5-06: Add `per_fold: [{season, wins, losses, pushes, hit_rate, n_games}]` to the `latest_run` object in `GET /api/v1/experiments/:id`. Source from `experiments.backtest_predictions` grouped by season for the `latest_run_id`. This was specced in Phase 4 Track 3 item 3.1 but is absent from the live API response.
-- P5-07: Verify `GET /api/v1/experiments/:id/feature-importance` is correctly registered in `app/main.py` and included in the deployed Cloud Run image. The endpoint returns 404 in production. Check router inclusion and redeploy if needed.
+Triggered by three rushing-feature experiments reporting 58–61% ATS against a
+49.65% baseline. **The result was a label inversion (INC-001), not an edge** —
+48.8% on correct labels. Both situational experiments were also NO-GO. Delivered
+configurable seeds, shuffle-labels leakage testing, per-fold breakdowns, feature
+importance, and comparison tooling.
 
-**FRONTEND** owns P5-01, P5-02, P5-04, P5-05 (display), and P5-08:
+Track 5 Go/No-Go: **both NO-GO.** Results were unambiguous; the decision was
+never formally recorded at the time (O-11) and is recorded here.
 
-- P5-01: Audit `src/router` (or equivalent routing config). Correct the path-to-component mappings so `/experiments` → ExperimentsPage, `/model` → ModelPage. Verify all six nav links route to the correct URL and component.
-- P5-02: Investigate the Features step scroll/click interaction. Likely cause: a click on a low-positioned checkbox is being captured by an underlying Back button when the wizard card is partially scrolled. Fix hit targets or ensure Back/Next are outside the scrollable card.
-- P5-04: In the New Experiment wizard Step 5, change the `end_season` default from `2024` to `2025`.
-- P5-05 (display): Once the API correctly returns completed experiment counts, ensure the dashboard stat card re-fetches and renders correctly.
-- P5-08: In Step 3 (Features), add a note below the selected count explaining that each selected feature is automatically mirrored to its away-team counterpart — e.g. "5 selected · 10 features used in model (home + away mirrors)".
+### Phase 5 — Polish Sprint ✅ 2026-05-24
+**Detail:** `PHASE5_STATUS.md`, `BACKEND_API_SPEC_PHASE5.md`,
+`FRONTEND_SPEC_PHASE5.md`
 
-### Agent Engagement Order
+Eight issues (P5-01 … P5-08) found in a live walkthrough: swapped router
+routes, wizard step-navigation, stuck dataset uploads, wrong `end_season`
+default, dashboard count, missing `per_fold`, 404 on feature-importance, and
+unexplained home/away feature mirroring. All fixed.
 
-| Order | Agent | Items |
-|-------|-------|-------|
-| 1 (parallel) | FRONTEND | P5-01, P5-02, P5-04, P5-05 display, P5-08 |
-| 1 (parallel) | BACKEND-API | P5-03, P5-05 query, P5-06, P5-07 |
-
-### Phase 5 Complete When
-
-- All routes in the nav work correctly and direct URL navigation works
-- A new user can complete the full experiment wizard without being kicked back to a previous step
-- Stuck datasets show an error state and can be deleted
-- `end_season` defaults to 2025
-- Dashboard experiment count reflects reality
-- Per-fold chart displays all folds, not just the most recent season
-- Feature importance panel renders on completed experiment results pages
-- Wizard communicates the home/away feature mirroring behaviour
+**Carried debt:** three visual verifications in `PHASE5_STATUS.md` remain
+unticked, and the FRONTEND May-2026 bug sprint is *paused, unverified not done*.
+Backend counterparts are confirmed shipped; the F2-E visual checks never were.
+Resume deliberately or drop deliberately — see `DELEGATIONS.md` carried debt.
 
 ---
 
-## Key Decisions (full ADRs in `docs/DECISIONS.md`)
+## Incidents
+
+| ID | Date | Summary | Record |
+|---|---|---|---|
+| INC-001 | 2026-05 | Label inversion produced a false 58–61% ATS result | `INC-001-label-inversion.md`, `INC-001-INVESTIGATION-REPORT.md` |
+| INC-002 | 2026-09-08 | Ingest blocked by the closing-line gate; monitoring alerts silently unfirable; a week spent unable to answer which code was running | `INC-002-ingest-blocked-by-closing-line-gate.md` |
+| — | 2026-09-09/10 | Ten defects across deploy, serving, dashboard and reproducibility, found and fixed under season deadline | `SPRINT-REVIEW-2026-09-10.md`, `REVIEW-2026-09-10.md` |
+
+---
+
+## Key decisions (full ADRs in `docs/DECISIONS.md`)
 
 | ADR | Decision | Status |
 |-----|----------|--------|
 | 001 | Use existing GCP project `nfl-model-471509` | Accepted |
 | 002 | nflfastR / nflverse as primary data spine | Accepted |
 | 003 | Cloud Run for the API service | Accepted |
-| 004 | BigQuery as the only data store | Accepted |
-| 005 | Project goal is a comprehensive NFL prediction platform | Accepted |
-| 006 | Experiment gates are per-experiment, not project-level | Accepted |
-| 007 | Self-service platform with form-based upload + future Claude API schema inference | Accepted |
-| 008 | FastAPI BackgroundTasks for Phase 2 async processing; swap to Cloud Run Jobs in Phase 3 | Accepted |
-| 009 | model.type uses abstract names in API contract; runner resolves to concrete implementations | Accepted |
-| 010 | Terraform selected for IaC | Accepted |
+| 004 | BigQuery as the only data store (no separate OLTP) | Accepted |
+| **005** | **Project goal is a comprehensive NFL prediction platform, _not_ an OL hypothesis validator** | **Accepted** |
+| **006** | **Experiment gates are per-experiment. The project-level ≥54% ATS gate is RETIRED** | **Accepted** |
+| 007 | Self-service platform with form-based upload + Claude API schema inference | Accepted |
+| 008 | FastAPI BackgroundTasks in Phase 2; swap to Cloud Run Jobs in Phase 3 | Accepted |
+| 009 | `model.type` uses abstract names in the API contract; runner resolves to concrete implementations | Accepted |
+| 010 | Terraform for infrastructure-as-code | Accepted |
+| **011** | **The platform is the product: no hypothesis testing in Claude chat** | **Accepted** |
+| 012 | Hypothesis chat is a bounded client of the existing write API | Accepted |
 
----
+**Session decisions not yet promoted to ADRs** — see
+`PRE_SEASON_STATUS_2026-08-31.md` §3 and `REVIEW-2026-09-10.md` §6:
 
-## Phase 6 — Hypothesis Chat 🔄 ACTIVE
-
-**Start date:** 2026-08-31
-**Status:** Plan approved. Stages 0 and 1 dispatched.
-**Plan:** `HYPOTHESIS-CHAT-BUILD-PLAN.md` · **Phase 1 record:** `HYPOTHESIS-CHAT-BRAINSTORM.md` · **Tracking:** `DELEGATIONS.md` · **Decision:** `../docs/DECISIONS.md` ADR-012
-
-### What Phase 6 Is
-
-A page in the app where Matt types a hypothesis in plain English, answers a fixed sequence of scoping questions while a governor layer challenges whether the experiment is worth running, approves a brief rendered from the exact `ExperimentConfig` that will execute, and has the existing runner run it — producing an experiment indistinguishable in `experiments.*` from a wizard-built one. A hypothesis the platform cannot currently express ends in a written capability-gap record rather than a workaround.
-
-Single user (Matt). Not public.
-
-### The constraint that shapes it
-
-The chat is a **client of the write API that already exists** — `POST /api/v1/experiments` and `POST /api/v1/experiments/{id}/runs`. It holds no BigQuery credential and cannot execute SQL or generated code, so ADR-011 is enforced by an absent capability rather than by a rule. The runner is not modified and MODELING has no work in this phase.
-
-### Build order
-
-| Stage | Agent | Job |
+| Ref | Decision | Needs an ADR |
 |---|---|---|
-| 0 | BACKEND-API | `scoping_tree.yaml` — the question sequence as declared data — plus its conformance test |
-| 1 | DATA-PIPELINE | `platform.scoping_sessions`, `platform.capability_gaps` |
-| 2 | BACKEND-API | Deterministic core: sessions, slot resolution, assemble, render, hash, approve, dispatch. **Zero AI.** |
-| 3 | BACKEND-API | Extractor — prose to slot pre-fills — and capability-gap detection |
-| 4 | BACKEND-API | Governor — sample size, multiple comparisons, cold-start; advisory, no veto |
-| 5 | FRONTEND | `/experiments/hypothesis` page and components |
-| 6 | TESTING-QA | Test suite — never the context that wrote stages 0–5 |
-| 7 | DEVOPS | Deploy, verify `ANTHROPIC_API_KEY` scope, live smoke test |
+| DEC-A | Live forward prediction is an active project | Fold into Phase 7 |
+| DEC-B | It follows the new-build protocol from Phase 1 | — |
+| DEC-C | Gate-passing is not a prerequisite for a forward prediction; the honest-evaluation banner is | ✅ **Yes** — this governs what the public sees |
+| — | `n_jobs=1` for reproducibility, and the caveat it places on every historical experiment | ✅ **Yes** |
 
-Stages 0 and 1 are parallel. Stage 2 is the load-bearing one: after it the feature works end to end with no model in the loop, so stages 3 and 4 are enhancement rather than completion.
-
-### Out of scope — handled elsewhere
-
-Live forward prediction and live odds (separate project). Data-spine remediation, `SEASON_AUTOMATION_PLAN.md` P0–P4 (separate session). Missing features and filters such as OL weight — surfaced *by* this phase as capability gaps, not built before it.
-
-### Phase 6 Complete When
-
-- [ ] A hypothesis typed in prose produces a completed backtest run visible in the experiments list
-- [ ] The approved brief and the executed config cannot disagree — `render()` is pure, and dispatch rejects an unapproved hash
-- [ ] The deterministic core passes its full acceptance set with `ANTHROPIC_API_KEY` unset
-- [ ] An extracted slot cannot be marked answered without explicit confirmation
-- [ ] The governor returns non-empty concerns on at least 5 of 6 deliberately flawed fixture configs
-- [ ] "Teams with heavier O lines perform better in poor weather" produces a capability-gap row naming OL weight, and does not produce one for weather
-- [ ] `ExperimentConfig`, the runner, and every existing endpoint contract are unchanged
+> **005, 006 and 011 are bolded because they are the ones that keep getting lost.**
+> Note that in `docs/DECISIONS.md` the ADRs are filed out of sequence — 005, 007,
+> 009, 008, 010, 011, **006**, 012 — so ADR-006, the decision that retires the
+> 54% gate, sits near the bottom where a skim will miss it. Reorder it.

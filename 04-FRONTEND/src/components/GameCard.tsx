@@ -73,7 +73,20 @@ export function GameCard({ game, prediction }: GameCardProps) {
                 <span className="text-xs text-muted-foreground">Model pick:</span>
                 <span className="text-sm font-medium">
                   {prediction.predicted_side === 'home' ? game.home_team : game.away_team}
-                  {' '}({formatConfidence(prediction.predicted_home_cover_prob)})
+                  {' '}(
+                  {formatConfidence(
+                    // predicted_home_cover_prob is always the HOME team's
+                    // probability. This line used to print it next to whichever
+                    // team was picked, so an away pick showed the home team's
+                    // number: "WAS (34.6%)" for a game the model gave WAS a
+                    // 65.4% chance of covering — the right pick advertised at
+                    // its opposite, and read as low confidence while the badge
+                    // beside it correctly said high.
+                    prediction.predicted_side === 'home'
+                      ? prediction.predicted_home_cover_prob
+                      : 1 - prediction.predicted_home_cover_prob,
+                  )}
+                  )
                 </span>
               </div>
               <div className="flex justify-end">
