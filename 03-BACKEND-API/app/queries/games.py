@@ -105,7 +105,14 @@ def list_games(
 
     if status is not None:
         # `status` is derived, not a real column — translate to a scores NULL check.
-        if status == "complete":
+        #
+        # "final" is the value the router accepts (pattern ^(scheduled|final)$),
+        # the value the schema returns, and the value the frontend sends. This
+        # branch only tested for "complete", so ?status=final matched nothing,
+        # added NO condition, and silently returned unplayed games alongside
+        # completed ones — a filter that appears to work and does nothing.
+        # "complete" stays accepted for any older caller still sending it.
+        if status in ("final", "complete"):
             conditions.append("home_score IS NOT NULL AND away_score IS NOT NULL")
         elif status == "scheduled":
             conditions.append("(home_score IS NULL OR away_score IS NULL)")
@@ -118,11 +125,20 @@ def list_games(
         bigquery.ScalarQueryParameter("off", "INT64", offset),
     ])
 
+    # Upcoming games are ordered soonest-first; everything else newest-first.
+    #
+    # With a single DESC order, `?status=scheduled&limit=50` returned the LAST 50
+    # scheduled games of the season — weeks 15-18 — so the dashboard opened on
+    # games three months away and never showed the week about to be played. The
+    # ordering was correct for browsing completed results and exactly backwards
+    # for the one view users actually look at.
+    week_dir = "ASC" if status == "scheduled" else "DESC"
+
     query = f"""
         SELECT {_game_select()}
         FROM `{PROJECT}.curated.games`
         {where}
-        ORDER BY season DESC, week DESC, game_id ASC
+        ORDER BY season DESC, week {week_dir}, game_id ASC
         LIMIT @lim OFFSET @off
     """
 

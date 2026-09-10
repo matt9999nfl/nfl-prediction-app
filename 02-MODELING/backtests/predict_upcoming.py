@@ -280,38 +280,103 @@ def generate_predictions(
 # ── BigQuery writes ───────────────────────────────────────────────────────────
 
 
-def upsert_production_config(client: bigquery.Client, meta: dict) -> None:
+def build_config_payload(meta: dict, season: int, week: int) -> dict:
+    """
+    The experiment_configs row for the rolling production model.
+
+    Every JSON blob here is parsed by the BACKEND-API's pydantic models when the
+    experiments list endpoint reads it, so the shapes are not free-form. In
+    particular MethodologyConfig.type is Literal["walk_forward"] — writing
+    anything else (e.g. "forward_prediction", which is what this actually is)
+    makes GET /api/v1/experiments return 500 for this row and takes the whole
+    list down with it. The honest description lives in `name` instead.
+
+    Kept as a pure function so it can be validated against those pydantic models
+    in tests without a BigQuery client. See test_predict_upcoming.py.
+    """
+    seasons = meta["seasons_trained"]
+    return {
+        "experiment_id": PRODUCTION_EXPERIMENT_ID,
+        "name": PRODUCTION_EXPERIMENT_NAME,
+        "target": "ats_cover",
+        "status": "complete",
+        # Truthfully false. Nothing here has cleared a success threshold; the
+        # serving layer's job is to make that visible, not to hide it (DEC-C).
+        "gate_passed": False,
+        "run_count": 1,
+        "features": [
+            {"dataset": "curated", "column": c, "semantic_name": c}
+            for c in meta["features"]
+        ],
+        "evaluation": {
+            "metric": "ats_hit_rate",
+            "success_threshold": 0.54,
+            "min_sample": 250,
+        },
+        "methodology": {
+            "type": "walk_forward",
+            "train_seasons": len(seasons),
+            "test_seasons": 1,
+            "start_season": int(seasons[0]),
+            "end_season": int(seasons[-1]),
+        },
+        "model": {
+            "type": "xgboost",
+            "hyperparams": {"name": "ol_xgb_v2", "random_state": 42},
+        },
+    }
+
+
+def upsert_production_config(client: bigquery.Client, meta: dict,
+                             season: int, week: int) -> None:
     """
     Keep exactly one config row for the rolling production model.
 
-    gate_passed is written FALSE, truthfully.  Nothing here has cleared a
-    success threshold, and the serving layer is responsible for making that
-    visible rather than for hiding it (DEC-C).
+    Supplies EVERY column the table declares. The first live run failed with
+    "Required field updated_at cannot be null" because this MERGE listed only
+    the columns it cared about; created_at/updated_at/evaluation/methodology/
+    model/run_count are all part of the row whether or not this script has an
+    opinion about them.
     """
-    features_json = json.dumps(
-        [{"dataset": "curated", "column": c, "semantic_name": c} for c in meta["features"]]
-    )
+    payload = build_config_payload(meta, season, week)
     query = f"""
         MERGE `{CONFIGS_TABLE}` T
         USING (SELECT @eid AS experiment_id) S
         ON T.experiment_id = S.experiment_id
         WHEN MATCHED THEN UPDATE SET
-            status = 'complete',
-            gate_passed = FALSE,
-            features = PARSE_JSON(@features)
+            name        = @name,
+            updated_at  = CURRENT_TIMESTAMP(),
+            target      = @target,
+            features    = PARSE_JSON(@features),
+            evaluation  = PARSE_JSON(@evaluation),
+            methodology = PARSE_JSON(@methodology),
+            model       = PARSE_JSON(@model),
+            status      = @status,
+            gate_passed = @gate_passed,
+            run_count   = COALESCE(T.run_count, 0) + 1
         WHEN NOT MATCHED THEN INSERT
-            (experiment_id, name, created_at, status, gate_passed, target, features)
+            (experiment_id, name, created_at, updated_at, target,
+             features, evaluation, methodology, model,
+             status, gate_passed, run_count)
         VALUES
-            (@eid, @name, CURRENT_TIMESTAMP(), 'complete', FALSE, 'ats_cover', PARSE_JSON(@features))
+            (@eid, @name, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), @target,
+             PARSE_JSON(@features), PARSE_JSON(@evaluation),
+             PARSE_JSON(@methodology), PARSE_JSON(@model),
+             @status, @gate_passed, @run_count)
     """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("eid", "STRING", PRODUCTION_EXPERIMENT_ID),
-            bigquery.ScalarQueryParameter("name", "STRING", PRODUCTION_EXPERIMENT_NAME),
-            bigquery.ScalarQueryParameter("features", "STRING", features_json),
-        ]
-    )
-    client.query(query, job_config=job_config).result()
+    params = [
+        bigquery.ScalarQueryParameter("eid", "STRING", payload["experiment_id"]),
+        bigquery.ScalarQueryParameter("name", "STRING", payload["name"]),
+        bigquery.ScalarQueryParameter("target", "STRING", payload["target"]),
+        bigquery.ScalarQueryParameter("features", "STRING", json.dumps(payload["features"])),
+        bigquery.ScalarQueryParameter("evaluation", "STRING", json.dumps(payload["evaluation"])),
+        bigquery.ScalarQueryParameter("methodology", "STRING", json.dumps(payload["methodology"])),
+        bigquery.ScalarQueryParameter("model", "STRING", json.dumps(payload["model"])),
+        bigquery.ScalarQueryParameter("status", "STRING", payload["status"]),
+        bigquery.ScalarQueryParameter("gate_passed", "BOOL", payload["gate_passed"]),
+        bigquery.ScalarQueryParameter("run_count", "INT64", payload["run_count"]),
+    ]
+    client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
     logger.info("experiment_configs: upserted %s", PRODUCTION_EXPERIMENT_NAME)
 
 
@@ -367,35 +432,66 @@ def replace_week_predictions(
     logger.info("backtest_predictions: wrote %d rows (run_id=%s)", len(out), run_id)
 
 
-def write_run_row(
-    client: bigquery.Client,
-    run_id: str,
-    meta: dict,
-    season: int,
-    week: int,
-) -> None:
+def build_run_row(run_id: str, meta: dict, season: int, week: int) -> dict:
+    """
+    The backtest_runs row.
+
+    `name` and `model_type` are REQUIRED by RUNS_SCHEMA and the first version of
+    this function supplied neither; it also sent `n_games`, which is not a
+    column — the field is `n_games_evaluated`. All three would have failed on
+    separate runs.
+
+    ats_* and hit-rate fields stay null deliberately: this run predicted games
+    that have not been played, so there is no record to report. --grade fills
+    the per-prediction results later; a run-level hit rate for an ungraded week
+    would be a number with no meaning.
+    """
     now = datetime.now(timezone.utc).isoformat()
-    row = {
+    return {
         "run_id": run_id,
         "experiment_id": PRODUCTION_EXPERIMENT_ID,
+        "name": PRODUCTION_EXPERIMENT_NAME,
         "run_at": now,
         "completed_at": now,
-        "status": "complete",
-        "gate_passed": False,
-        "n_games": meta["n_predicted"],
+        "model_type": "xgboost",
         "features": json.dumps(meta["features"]),
+        "status": "complete",
+        "ats_hit_rate": None,
+        "ats_record_wins": None,
+        "ats_record_losses": None,
+        "ats_record_pushes": None,
+        "n_games_evaluated": meta["n_predicted"],
+        "gate_passed": False,
+        "training_window_years": len(meta["seasons_trained"]),
+        "seasons_evaluated": json.dumps([season]),
+        "folds_complete": 1,
+        "folds_total": 1,
+        "error_message": None,
         "notes": (
             f"Forward prediction for {season} week {week}. "
             f"Trained on {meta['n_train']} completed games "
             f"({meta['seasons_trained'][0]}-{meta['seasons_trained'][-1]}). "
+            "Games not yet played, so no ATS record. "
             "Not gate-passed: no experiment has cleared its success threshold."
         ),
+        "success_criteria": json.dumps({"metric": "ats_hit_rate",
+                                        "success_threshold": 0.54,
+                                        "min_sample": 250}),
+        "feature_importances": json.dumps(meta.get("feature_importance") or []),
     }
+
+
+def write_run_row(client: bigquery.Client, run_id: str, meta: dict,
+                  season: int, week: int) -> None:
+    row = build_run_row(run_id, meta, season, week)
     errors = client.insert_rows_json(RUNS_TABLE, [row])
     if errors:
-        logger.warning("backtest_runs insert returned errors: %s", errors)
-    else:
-        logger.info("backtest_runs: wrote run %s", run_id)
+        raise RuntimeError(
+            f"backtest_runs insert failed: {errors}. Predictions were written but "
+            "will NOT be served — GET /api/v1/predictions joins backtest_runs to "
+            "experiment_configs, so a missing run row means a 404."
+        )
+    logger.info("backtest_runs: wrote run %s", run_id)
 
 
 def grade_completed(client: bigquery.Client, season: int, week: int) -> None:
@@ -430,6 +526,80 @@ def grade_completed(client: bigquery.Client, season: int, week: int) -> None:
     logger.info("Graded %s rows for %d week %d", job.num_dml_affected_rows, season, week)
 
 
+# ── Preflight ─────────────────────────────────────────────────────────────────
+
+
+def preflight(client: bigquery.Client) -> None:
+    """
+    Check every table this script writes to BEFORE loading half a million plays.
+
+    The first two live runs of this script both failed on a write, after ~90
+    seconds of BigQuery loads and a model fit, on a mismatch that was knowable in
+    two seconds. Once for a missing required column, once for a column that did
+    not exist. Both were the same class of mistake: writing against a remembered
+    schema instead of the real one.
+
+    This does not make the writes correct. It makes them fail fast and say why.
+    """
+    problems: list[str] = []
+
+    def _check(table: str, required: set[str], label: str) -> None:
+        try:
+            schema = client.get_table(table).schema
+        except Exception as exc:
+            problems.append(f"{label}: cannot read {table} — {exc}")
+            return
+        names = {f.name for f in schema}
+        missing = required - names
+        if missing:
+            problems.append(
+                f"{label}: {table} is missing column(s) {sorted(missing)}. "
+                f"Present: {sorted(names)}"
+            )
+        # Any REQUIRED column we do not supply will reject the row.
+        unsupplied = {
+            f.name for f in schema
+            if f.mode == "REQUIRED" and f.name not in required
+        }
+        if unsupplied:
+            problems.append(
+                f"{label}: {table} has REQUIRED column(s) {sorted(unsupplied)} "
+                "that this script does not write."
+            )
+
+    _check(
+        CONFIGS_TABLE,
+        {"experiment_id", "name", "created_at", "updated_at", "target",
+         "features", "evaluation", "methodology", "model",
+         "status", "gate_passed", "run_count"},
+        "experiment_configs",
+    )
+    _check(
+        RUNS_TABLE,
+        set(build_run_row("preflight", {
+            "features": [], "n_predicted": 0, "n_train": 0,
+            "seasons_trained": [0, 0], "feature_importance": [],
+        }, 0, 0)),
+        "backtest_runs",
+    )
+    _check(
+        PREDS_TABLE,
+        {"run_id", "experiment_id", "fold", "game_id", "season", "week",
+         "home_team", "away_team", "home_spread_close",
+         "predicted_home_cover_prob", "predicted_side",
+         "actual_home_covered", "correct", "ol_mismatch_flag"},
+        "backtest_predictions",
+    )
+
+    if problems:
+        for p in problems:
+            logger.error("PREFLIGHT: %s", p)
+        raise SystemExit(
+            "Preflight failed — see the errors above. Nothing was read or written."
+        )
+    logger.info("Preflight OK — all three target tables match what this script writes.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
@@ -446,6 +616,11 @@ def main() -> int:
     if args.grade:
         grade_completed(client, args.season, args.week)
         return 0
+
+    # Two seconds of schema checks before ~90 seconds of data loading, so a
+    # write mismatch is reported before the work rather than after it.
+    if not args.dry_run:
+        preflight(client)
 
     preds, meta = generate_predictions(client, args.season, args.week)
 
@@ -476,7 +651,7 @@ def main() -> int:
         return 0
 
     run_id = str(uuid.uuid4())
-    upsert_production_config(client, meta)
+    upsert_production_config(client, meta, args.season, args.week)
     replace_week_predictions(client, preds, run_id, args.season, args.week)
     write_run_row(client, run_id, meta, args.season, args.week)
     print(f"  Written. experiment_id={PRODUCTION_EXPERIMENT_ID} run_id={run_id}")

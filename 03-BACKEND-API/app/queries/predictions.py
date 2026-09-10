@@ -163,3 +163,47 @@ def get_production_predictions(
 
     rows = _run_query(client, query, params)
     return rows
+
+
+# ── Trigger the refresh job ───────────────────────────────────────────────────
+
+
+REFRESH_JOB_NAME = "nfl-production-refresh"
+REFRESH_JOB_REGION = "us-central1"
+
+
+def trigger_prediction_refresh(season: int, week: int | None = None) -> str:
+    """
+    Execute the nfl-production-refresh Cloud Run Job.
+
+    Same mechanism as trigger_experiment_runner: a direct call to the Cloud Run
+    Jobs API using the service's own credentials, with environment overrides.
+    The job grades any finished week and predicts the next unplayed one; passing
+    a week pins it to that week instead of letting the job choose.
+
+    Returns the execution name so the caller can report it.
+    """
+    import google.auth
+    import google.auth.transport.requests
+    import requests as http_requests
+
+    credentials, project = google.auth.default()
+    credentials.refresh(google.auth.transport.requests.Request())
+
+    url = (
+        f"https://{REFRESH_JOB_REGION}-run.googleapis.com/apis/run.googleapis.com/v1/"
+        f"namespaces/{project}/jobs/{REFRESH_JOB_NAME}:run"
+    )
+
+    env = [{"name": "REFRESH_SEASON", "value": str(season)}]
+    if week is not None:
+        env.append({"name": "REFRESH_WEEK", "value": str(week)})
+
+    resp = http_requests.post(
+        url,
+        json={"overrides": {"containerOverrides": [{"env": env}]}},
+        headers={"Authorization": f"Bearer {credentials.token}"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json().get("metadata", {}).get("name", "unknown")

@@ -212,6 +212,20 @@ class ProductionPredictionItem(BaseModel):
     confidence_tier: Literal["high", "medium", "low"] | None = None
 
 
+class PredictionRefreshResponse(BaseModel):
+    """Response for POST /api/v1/predictions/refresh.
+
+    202 with `status="accepted"` — the Cloud Run Job was started, not finished.
+    Generating a week takes roughly two minutes (loading play-by-play dominates),
+    so the caller polls GET /api/v1/predictions to see the result appear.
+    """
+    status: str
+    season: int
+    week: int | None = None
+    execution: str
+    message: str
+
+
 class ProductionPredictionsResponse(BaseModel):
     """Response for GET /api/v1/predictions?season=N&week=N.
 

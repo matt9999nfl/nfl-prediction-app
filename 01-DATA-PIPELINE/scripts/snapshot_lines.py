@@ -59,6 +59,19 @@ MARKET_FIELDS = [
     "under_odds",
 ]
 
+# Target BigQuery type per market field. Kept beside MARKET_FIELDS so the cast
+# and the table schema cannot drift apart.
+FIELD_TYPES = {
+    "spread_line": "FLOAT64",
+    "total_line": "FLOAT64",
+    "home_moneyline": "INT64",
+    "away_moneyline": "INT64",
+    "home_spread_odds": "INT64",
+    "away_spread_odds": "INT64",
+    "over_odds": "INT64",
+    "under_odds": "INT64",
+}
+
 SCHEMA = [
     bigquery.SchemaField("game_id", "STRING", mode="REQUIRED"),
     bigquery.SchemaField("season", "INTEGER", mode="REQUIRED"),
@@ -135,9 +148,24 @@ def snapshot(client: bigquery.Client, seasons: list[int] | None = None) -> dict:
         season_filter = "WHERE s.season IN UNNEST(@seasons)"
         params.append(bigquery.ArrayQueryParameter("seasons", "INT64", seasons))
 
-    select_cols = ",\n              ".join(f"s.{c}" for c in available)
+    # Every column is SAFE_CAST to its target type rather than selected raw.
+    #
+    # raw_nflfastr.schedules is loaded with schema autodetect from pandas, and
+    # pandas represents a nullable integer column as float64 -- so `week` arrives
+    # as FLOAT64 and BigQuery refuses the insert into an INT64 column. The same
+    # applies to every moneyline and odds field, which are nullable ints at
+    # source. Casting also means the comparison against the previous snapshot
+    # compares like with like instead of 1.0 against 1.
+    #
+    # SAFE_CAST rather than CAST: an unparseable value yields NULL for that one
+    # field instead of failing the whole run mid-season.
+    def _cast(col: str) -> str:
+        target = FIELD_TYPES[col]
+        return f"SAFE_CAST(s.{col} AS {target}) AS {col}"
+
+    select_cols = ",\n              ".join(_cast(c) for c in available)
     null_cols = ",\n              ".join(
-        f"CAST(NULL AS {'FLOAT64' if c in ('spread_line', 'total_line') else 'INT64'}) AS {c}"
+        f"CAST(NULL AS {FIELD_TYPES[c]}) AS {c}"
         for c in MARKET_FIELDS if c not in available
     )
     all_cols = select_cols + ((",\n              " + null_cols) if null_cols else "")
@@ -156,11 +184,11 @@ def snapshot(client: bigquery.Client, seasons: list[int] | None = None) -> dict:
            home_spread_odds, away_spread_odds, over_odds, under_odds)
         WITH src AS (
           SELECT
-              s.game_id,
-              s.season,
-              s.week,
-              s.home_team,
-              s.away_team,
+              CAST(s.game_id AS STRING) AS game_id,
+              SAFE_CAST(s.season AS INT64) AS season,
+              SAFE_CAST(s.week AS INT64) AS week,
+              CAST(s.home_team AS STRING) AS home_team,
+              CAST(s.away_team AS STRING) AS away_team,
               (s.home_score IS NOT NULL AND s.away_score IS NOT NULL) AS game_completed,
               {all_cols}
           FROM `{SCHEDULES_TABLE}` s

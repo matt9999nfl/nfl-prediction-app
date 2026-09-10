@@ -7,16 +7,21 @@
 
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useGames, useExperiments, useProductionPredictions } from '@/api/queries'
+import {
+  useGames,
+  useExperiments,
+  useProductionPredictions,
+  useRefreshPredictions,
+} from '@/api/queries'
 import { GameCard } from '@/components/GameCard'
-import { EvaluationBanner } from '@/components/EvaluationBanner'
 import { LoadingCards } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { EmptyState } from '@/components/EmptyState'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Calendar, FlaskConical, Plus } from 'lucide-react'
+import { Calendar, FlaskConical, Plus, RefreshCw } from 'lucide-react'
 
 // Current NFL season — adjust as the calendar advances
 const CURRENT_SEASON = new Date().getFullYear()
@@ -68,11 +73,18 @@ export function DashboardPage() {
     return map
   }, [predictionsData])
 
-  // Show the banner whenever picks are on screen and nothing has cleared a
-  // gate. Keyed off the served response, not off a local assumption, so the
-  // day an experiment does pass its gate the banner disappears on its own.
-  const showEvaluationBanner =
-    predictionsData !== undefined && predictionsData.gate_passed === false
+  // NOTE: the evaluation banner is rendered once, by Layout, for every page.
+  // This page briefly rendered a second one and the dashboard showed it twice.
+
+  const refresh = useRefreshPredictions()
+
+  // The refresh job grades any finished week and then predicts the next
+  // unplayed one, so the button does not need to say which week it is doing —
+  // it does whichever week is actually next.
+  const handleRefresh = () => {
+    if (upcomingWeek === undefined) return
+    refresh.mutate({ season: CURRENT_SEASON })
+  }
 
   return (
     <div className="space-y-8">
@@ -84,13 +96,43 @@ export function DashboardPage() {
             Upcoming games with model predictions
           </p>
         </div>
-        <Link to="/experiments/new">
-          <Button size="sm">
-            <Plus className="mr-2 h-4 w-4" />
-            New experiment
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleRefresh}
+            disabled={refresh.isPending || upcomingWeek === undefined}
+          >
+            <RefreshCw
+              className={`mr-2 h-4 w-4 ${refresh.isPending ? 'animate-spin' : ''}`}
+            />
+            {refresh.isPending ? 'Starting…' : 'Generate predictions'}
           </Button>
-        </Link>
+          <Link to="/experiments/new">
+            <Button size="sm">
+              <Plus className="mr-2 h-4 w-4" />
+              New experiment
+            </Button>
+          </Link>
+        </div>
       </div>
+
+      {/* Refresh feedback. The job runs for ~2 minutes after a 202, so the
+          message has to say that explicitly — otherwise the button looks like
+          it did nothing. */}
+      {refresh.isSuccess && (
+        <Alert className="mb-4">
+          <RefreshCw className="h-4 w-4" />
+          <AlertDescription>{refresh.data.message}</AlertDescription>
+        </Alert>
+      )}
+      {refresh.isError && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>
+            Could not start the prediction run: {refresh.error.message}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Quick-stats strip */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -134,8 +176,6 @@ export function DashboardPage() {
           }
         />
       )}
-
-      {showEvaluationBanner && <EvaluationBanner />}
 
       {!gamesLoading && !gamesError && gamesByWeek.map(([week, weekGames]) => (
         <section key={week}>

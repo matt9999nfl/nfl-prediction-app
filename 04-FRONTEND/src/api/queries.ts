@@ -33,6 +33,7 @@ import type {
   ExperimentRunStatus,
   Prediction,
   ProductionPredictionsResponse,
+  PredictionRefreshResponse,
   CreateExperimentPayload,
   Framework,
   CreateFrameworkPayload,
@@ -107,6 +108,27 @@ export function useProductionPredictions(
     enabled: week !== undefined,
     staleTime: 60_000,
     retry: false,
+  })
+}
+
+/**
+ * Start a prediction refresh.
+ *
+ * Returns 202 as soon as the job starts — it takes roughly two minutes, so the
+ * predictions query is invalidated on a delay rather than immediately;
+ * refetching straight away would re-read the same week and look like nothing
+ * happened.
+ */
+export function useRefreshPredictions() {
+  const queryClient = useQueryClient()
+  return useMutation<PredictionRefreshResponse, Error, { season: number; week?: number }>({
+    mutationFn: ({ season, week }) =>
+      api.post<PredictionRefreshResponse>('/api/v1/predictions/refresh', { season, week }),
+    onSuccess: () => {
+      setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ['predictions'] })
+      }, 120_000)
+    },
   })
 }
 

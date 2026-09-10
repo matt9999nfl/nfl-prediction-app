@@ -301,6 +301,14 @@ export interface ProductionPredictionsResponse {
   data: Prediction[]
 }
 
+export interface PredictionRefreshResponse {
+  status: string
+  season: number
+  week: number | null
+  execution: string
+  message: string
+}
+
 export type CreateExperimentPayload = Omit<
   ExperimentConfig,
   'experiment_id' | 'created_at' | 'status' | 'gate_passed'

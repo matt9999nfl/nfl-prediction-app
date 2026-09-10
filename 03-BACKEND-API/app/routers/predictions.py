@@ -14,13 +14,17 @@ Tables:
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status as http_status
 from google.cloud import bigquery
 
-from app.dependencies import get_bq_client, get_request_id
+from app.dependencies import get_bq_client, get_request_id, require_api_key
 from app.queries import predictions as pq
 from app.schemas.common import ErrorResponse
-from app.schemas.experiments import ProductionPredictionItem, ProductionPredictionsResponse
+from app.schemas.experiments import (
+    PredictionRefreshResponse,
+    ProductionPredictionItem,
+    ProductionPredictionsResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,4 +121,71 @@ def get_predictions(
         generated_at=completed_at,
         gate_passed=bool(prod_exp.get("gate_passed", False)),
         data=predictions,
+    )
+
+
+# ── POST /api/v1/predictions/refresh ─────────────────────────────────────────
+
+
+@router.post(
+    "/refresh",
+    response_model=PredictionRefreshResponse,
+    status_code=http_status.HTTP_202_ACCEPTED,
+    responses={
+        401: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+    },
+    summary="Generate predictions for a week",
+    description=(
+        "Starts the production refresh job, which grades any finished week and "
+        "then predicts the next unplayed week. Pass `week` to pin it to a "
+        "specific week instead. Returns 202 immediately — the job takes about "
+        "two minutes; poll GET /api/v1/predictions to see the result."
+    ),
+)
+def refresh_predictions(
+    request: Request,
+    request_id: Annotated[str, Depends(get_request_id)],
+    _: Annotated[None, Depends(require_api_key)],
+    season: Annotated[int, Body(embed=True, description="Season year, e.g. 2026")],
+    week: Annotated[
+        int | None,
+        Body(embed=True, description="Optional — pin to this week instead of the next unplayed one"),
+    ] = None,
+) -> PredictionRefreshResponse:
+    """
+    Write path, so it sits behind require_api_key like every other trigger here.
+
+    Deliberately does NOT wait for the job. Generating a week loads ~480k plays
+    and fits a model; holding an HTTP request open for that would hit Cloud
+    Run's 60-second request timeout and report a failure for a job that is
+    running fine.
+    """
+    try:
+        execution = pq.trigger_prediction_refresh(season, week)
+    except Exception as exc:
+        logger.error(
+            "[%s] Failed to trigger prediction refresh for %s week %s: %s",
+            request_id, season, week, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "Could not start the prediction refresh job",
+                "code": "job_trigger_failed",
+                "request_id": request_id,
+            },
+        )
+
+    target = f"{season} week {week}" if week is not None else f"{season}, next unplayed week"
+    logger.info("[%s] Started prediction refresh for %s → %s", request_id, target, execution)
+    return PredictionRefreshResponse(
+        status="accepted",
+        season=season,
+        week=week,
+        execution=execution,
+        message=(
+            f"Generating predictions for {target}. This takes about two minutes; "
+            "the picks appear on the dashboard when it finishes."
+        ),
     )
