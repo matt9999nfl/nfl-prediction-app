@@ -57,10 +57,10 @@ export function GameCard({ game, prediction }: GameCardProps) {
 
           {/* Lines */}
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {/* formatHomeSpread, not formatSpread — home_spread_close is positive
+                when the home team is favoured, which is the opposite of betting
+                notation. See the comment on formatHomeSpread. */}
             {game.home_spread_close !== null && (
-              {/* formatHomeSpread, not formatSpread — home_spread_close is positive
-                  when the home team is favoured, which is the opposite of betting
-                  notation. See the comment on formatHomeSpread. */}
               <span>Spread: {game.home_team} {formatHomeSpread(game.home_spread_close)}</span>
             )}
             {game.total_close !== null && (
