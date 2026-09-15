@@ -14,6 +14,7 @@ import {
   useRefreshPredictions,
 } from '@/api/queries'
 import { GameCard } from '@/components/GameCard'
+import { LowDataWarning } from '@/components/LowDataWarning'
 import { LoadingCards } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { EmptyState } from '@/components/EmptyState'
@@ -154,6 +155,8 @@ export function DashboardPage() {
       </div>
 
       {/* Games list */}
+      {upcomingWeek !== undefined && <LowDataWarning week={upcomingWeek} />}
+
       {gamesLoading && <LoadingCards count={6} />}
 
       {gamesError && (
