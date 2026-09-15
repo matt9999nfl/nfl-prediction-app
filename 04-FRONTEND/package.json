@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "types:generate": "openapi-typescript http://localhost:8000/openapi.json -o src/api/openapi.gen.ts",
-    "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0"
+    "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0",
+    "test": "vitest run"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.0.4",
@@ -42,6 +43,7 @@
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.2.2",
-    "vite": "^5.2.0"
+    "vite": "^5.2.0",
+    "vitest": "^3.2.7"
   }
 }

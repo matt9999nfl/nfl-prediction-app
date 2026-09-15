@@ -52,6 +52,18 @@ jobs:
         working-directory: 04-FRONTEND
         run: npm ci
 
+      # Gate: nothing is uploaded unless the code type-checks and the unit tests
+      # pass. Runs before type generation so it checks the committed code.
+      # Added 2026-09-15 after two display defects (DEFECT-1, DEFECT-2) shipped
+      # past a green pipeline that ran no tests.
+      - name: Type-check
+        working-directory: 04-FRONTEND
+        run: npm run typecheck
+
+      - name: Unit tests
+        working-directory: 04-FRONTEND
+        run: npm test
+
       - name: Generate types from live API
         working-directory: 04-FRONTEND
         run: npm run types:generate -- --url "${{ steps.api-url.outputs.url }}"

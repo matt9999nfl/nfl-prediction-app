@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { ConfidenceBadge } from '@/components/StatusBadge'
 import { formatGameDate, formatHomeSpread, formatTotal, formatConfidence, teamName } from '@/lib/formatters'
 import type { Game, Prediction } from '@/api/types'
+import { pickedSideProb, pickedTeam } from '@/lib/predictions'
 import { cn } from '@/lib/utils'
 
 interface GameCardProps {
@@ -75,20 +76,11 @@ export function GameCard({ game, prediction }: GameCardProps) {
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Model pick:</span>
                 <span className="text-sm font-medium">
-                  {prediction.predicted_side === 'home' ? game.home_team : game.away_team}
+                  {pickedTeam(game, prediction)}
                   {' '}(
-                  {formatConfidence(
-                    // predicted_home_cover_prob is always the HOME team's
-                    // probability. This line used to print it next to whichever
-                    // team was picked, so an away pick showed the home team's
-                    // number: "WAS (34.6%)" for a game the model gave WAS a
-                    // 65.4% chance of covering — the right pick advertised at
-                    // its opposite, and read as low confidence while the badge
-                    // beside it correctly said high.
-                    prediction.predicted_side === 'home'
-                      ? prediction.predicted_home_cover_prob
-                      : 1 - prediction.predicted_home_cover_prob,
-                  )}
+                  {/* pickedSideProb, not predicted_home_cover_prob: that field is always
+                      the HOME team's number. See src/lib/predictions.ts (DEFECT-1). */}
+                  {formatConfidence(pickedSideProb(prediction))}
                   )
                 </span>
               </div>
