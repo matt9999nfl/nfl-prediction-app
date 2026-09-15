@@ -169,6 +169,14 @@ def main() -> int:
             replace_week_predictions(client, preds, run_id, season, week)
             write_run_row(client, run_id, meta, season, week)
 
+            # replace_week_predictions writes every row ungraded. Step 1 above
+            # grades the weeks that finished, but a FORCED re-run of a week that
+            # is already partly played (REFRESH_WEEK set to a completed week)
+            # would wipe those grades again on the way out. Re-deriving from
+            # curated.games here closes that window; it is a no-op when nothing
+            # in the target week has been played.
+            grade_completed(client, season, week)
+
             logger.info(
                 "Wrote %s predictions for %s week %s (run_id=%s)",
                 len(preds), season, week, run_id,

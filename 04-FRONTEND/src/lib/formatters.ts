@@ -15,11 +15,47 @@ export function formatPctRaw(value: number | null | undefined, decimals = 1): st
   return `${value.toFixed(decimals)}%`
 }
 
+/**
+ * Format a spread in betting notation: a favourite carries a minus sign, an
+ * underdog a plus.
+ *
+ * Pure number formatter — it knows nothing about whose spread it is. For a value
+ * out of `curated.games.home_spread_close`, use formatHomeSpread instead: that
+ * column does NOT use this sign convention.
+ */
 export function formatSpread(spread: number | null | undefined): string {
   if (spread == null) return 'PK'
   if (spread === 0) return 'PK'
   const sign = spread > 0 ? '+' : ''
   return `${sign}${spread.toFixed(1)}`
+}
+
+/**
+ * Format `home_spread_close` for display beside the HOME team's name.
+ *
+ * The two conventions in play are opposites, which is the entire reason this
+ * function exists:
+ *
+ *   nflverse `spread_line` — POSITIVE means the home team is FAVOURED.
+ *                            home_spread_close = 6.0  =>  home favoured by 6.
+ *   betting notation       — NEGATIVE means favoured.
+ *                            "PHI -6.0"               =>  PHI favoured by 6.
+ *
+ * Passing the raw value straight to formatSpread printed "PHI +6.0" for a game
+ * PHI were favoured to win by six — advertising every favourite as an underdog
+ * and every underdog as a favourite, on all 16 games of the 2026 week-1 slate.
+ *
+ * The stored data is correct and so is `derive_home_covered()`; only the render
+ * was wrong. Confirmed empirically against 2026_01_NE_SEA: SEA won 13-10, a
+ * margin of exactly +3 against a home_spread_close of +3.0, and `home_covered`
+ * is null — a push. A push requires margin == spread, which holds only under the
+ * positive-means-home-favoured reading.
+ *
+ * `verify_label_convention.py` re-checks this against the whole games table.
+ */
+export function formatHomeSpread(homeSpreadClose: number | null | undefined): string {
+  if (homeSpreadClose == null) return 'PK'
+  return formatSpread(-homeSpreadClose)
 }
 
 export function formatTotal(total: number | null | undefined): string {

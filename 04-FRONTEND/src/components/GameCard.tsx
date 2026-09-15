@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ConfidenceBadge } from '@/components/StatusBadge'
-import { formatGameDate, formatSpread, formatTotal, formatConfidence, teamName } from '@/lib/formatters'
+import { formatGameDate, formatHomeSpread, formatTotal, formatConfidence, teamName } from '@/lib/formatters'
 import type { Game, Prediction } from '@/api/types'
 import { cn } from '@/lib/utils'
 
@@ -58,7 +58,10 @@ export function GameCard({ game, prediction }: GameCardProps) {
           {/* Lines */}
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             {game.home_spread_close !== null && (
-              <span>Spread: {game.home_team} {formatSpread(game.home_spread_close)}</span>
+              {/* formatHomeSpread, not formatSpread — home_spread_close is positive
+                  when the home team is favoured, which is the opposite of betting
+                  notation. See the comment on formatHomeSpread. */}
+              <span>Spread: {game.home_team} {formatHomeSpread(game.home_spread_close)}</span>
             )}
             {game.total_close !== null && (
               <span>O/U {formatTotal(game.total_close)}</span>

@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   formatGameDate,
-  formatSpread,
+  formatHomeSpread,
   formatTotal,
   formatYards,
   teamName,
@@ -138,9 +138,11 @@ export function GameDetailPage() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            {/* formatHomeSpread, not formatSpread — home_spread_close is positive
+                when the home team is favoured, the opposite of betting notation. */}
             <StatItem
               label={`${game.home_team} spread`}
-              value={formatSpread(game.home_spread_close)}
+              value={formatHomeSpread(game.home_spread_close)}
             />
             <StatItem label="Total (O/U)" value={formatTotal(game.total_close)} />
           </div>

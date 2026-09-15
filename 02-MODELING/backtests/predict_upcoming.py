@@ -380,6 +380,26 @@ def upsert_production_config(client: bigquery.Client, meta: dict,
     logger.info("experiment_configs: upserted %s", PRODUCTION_EXPERIMENT_NAME)
 
 
+def _count_graded(client: bigquery.Client, season: int, week: int) -> int:
+    """How many of this week's predictions already carry a result."""
+    query = f"""
+        SELECT COUNT(*) AS n FROM `{PREDS_TABLE}`
+        WHERE experiment_id = @eid AND season = @season AND week = @week
+          AND correct IS NOT NULL
+    """
+    rows = list(client.query(
+        query,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("eid", "STRING", PRODUCTION_EXPERIMENT_ID),
+                bigquery.ScalarQueryParameter("season", "INT64", season),
+                bigquery.ScalarQueryParameter("week", "INT64", week),
+            ]
+        ),
+    ).result())
+    return int(rows[0]["n"]) if rows else 0
+
+
 def replace_week_predictions(
     client: bigquery.Client,
     preds: pd.DataFrame,
@@ -393,7 +413,33 @@ def replace_week_predictions(
     Re-running mid-week (lines move, injuries land) must not leave two
     generations of prediction for the same game, which would let the serving
     endpoint return whichever it happened to read first.
+
+    DESTRUCTIVE AFTER KICKOFF — the caller must re-grade.
+    ----------------------------------------------------
+    This was written for re-running BEFORE any game in the week had been played,
+    and it is only idempotent in that case. Every row it writes carries
+    `correct = NULL`, so re-running a week that has already been graded throws the
+    grades away.
+
+    Observed 2026-09-13: predictions for 2026 week 1 were regenerated after the
+    Thursday opener had finished. `2026_01_SF_LA` — the model's first ever graded
+    forward pick, and a correct one — came back with `actual_home_covered = false`
+    and `correct = NULL`. The running record silently reset and nothing said so.
+
+    Both callers now run `grade_completed()` immediately after this. It re-derives
+    the result from `curated.games` rather than trying to carry the old value
+    forward, so the source of truth wins. The count logged below exists so that if
+    that re-grade ever fails, the loss shows up in the log instead of vanishing.
     """
+    graded_before = _count_graded(client, season, week)
+    if graded_before:
+        logger.warning(
+            "%d already-graded prediction(s) for %s week %s are about to be "
+            "rewritten as ungraded. grade_completed() runs next and restores them "
+            "from curated.games — if it does not, this is where the record was lost.",
+            graded_before, season, week,
+        )
+
     delete_q = f"""
         DELETE FROM `{PREDS_TABLE}`
         WHERE experiment_id = @eid AND season = @season AND week = @week
@@ -654,6 +700,14 @@ def main() -> int:
     upsert_production_config(client, meta, args.season, args.week)
     replace_week_predictions(client, preds, run_id, args.season, args.week)
     write_run_row(client, run_id, meta, args.season, args.week)
+
+    # replace_week_predictions writes every row ungraded. If any game in this week
+    # has already been played — the Thursday opener when the Sunday slate is
+    # regenerated, say — re-running without this silently discards its result.
+    # grade_completed re-derives from curated.games and is a no-op when nothing
+    # has finished, so it is always safe to call.
+    grade_completed(client, args.season, args.week)
+
     print(f"  Written. experiment_id={PRODUCTION_EXPERIMENT_ID} run_id={run_id}")
     return 0
 
