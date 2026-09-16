@@ -76,11 +76,13 @@ from features.ol_metrics import (  # noqa: E402
     compute_season_to_date_features,
     build_game_feature_matrix,
     ALL_TEAM_RATE_FEATURES,
+    ALL_TEAM_RATE_FEATURES_BLEND,
     GAME_CONTEXT_FEATURES,
 )
 from features.comprehensive import (  # noqa: E402
     compute_additional_team_features,
     ALL_ADDITIONAL_TEAM_FEATURES,
+    ALL_ADDITIONAL_TEAM_FEATURES_BLEND,
 )
 from features.situational import (  # noqa: E402
     compute_situational_features,
@@ -105,6 +107,30 @@ ALL_CURATED_TEAM_FEATURES: list[str] = (
     + ALL_ADDITIONAL_TEAM_FEATURES
     + SITUATIONAL_TEAM_FEATURES
 )
+
+# The feature list LIVE serving uses (PROMPT-PRIOR-SEASON-BLEND.md §5 go-live,
+# approved 2026-09-16). Swaps each of the 12+8 count-based-ratio features for
+# its _blend counterpart; keeps rest_days and prior_week_margin as-is (no blend
+# defined for either — see situational.py); adds avg_margin_blend as
+# prior_week_margin's counterpart and swaps season_win_pct for its blend.
+ALL_CURATED_TEAM_FEATURES_BLEND: list[str] = (
+    ALL_TEAM_RATE_FEATURES_BLEND
+    + ALL_ADDITIONAL_TEAM_FEATURES_BLEND
+    + ["rest_days", "prior_week_margin", "season_win_pct_blend", "avg_margin_blend"]
+)
+
+# Chosen by backtest (PROMPT-PRIOR-SEASON-BLEND.md §4): N=8 had the lowest log
+# loss on the 2019-2022 tuning seasons (weeks 2-4), and cleared the
+# pre-declared bar on the 2023-2025 confirmation seasons (log loss weeks 2-4
+# lower AND all-weeks not higher than the un-blended baseline). See
+# docs/DECISIONS.md ADR-013 for the full table.
+PRODUCTION_BLEND_N = 8
+
+# generate_predictions()'s live defaults. ALL_CURATED_TEAM_FEATURES (the 23
+# base, current-season-only features) is kept above for backtesting/comparison
+# and is still what run_experiment.py's baseline configs use — it is no longer
+# what live serving trains and predicts on.
+PRODUCTION_FEATURE_LIST = ALL_CURATED_TEAM_FEATURES_BLEND
 
 # Stable identity for the rolling in-season production model.  Reusing one
 # experiment_id across weeks means the serving endpoint has a single thing to
@@ -154,18 +180,26 @@ def build_placeholder_plays(slate: pd.DataFrame, season: int, week: int) -> pd.D
     return ph
 
 
-def build_team_features(plays: pd.DataFrame, games: pd.DataFrame) -> pd.DataFrame:
-    """Mirror of run_experiment._build_all_curated_team_features (23 per-team features)."""
-    base = compute_season_to_date_features(plays)
-    addl = compute_additional_team_features(plays)
-    situ = compute_situational_features(games)
+def build_team_features(plays: pd.DataFrame, games: pd.DataFrame, blend_n: int = 4) -> pd.DataFrame:
+    """
+    Mirror of run_experiment._build_all_curated_team_features: the 23 base
+    per-team features, plus their _blend and _prev counterparts
+    (PROMPT-PRIOR-SEASON-BLEND.md §3a/§3b). `blend_n` only affects _blend
+    columns.
+    """
+    base = compute_season_to_date_features(plays, blend_n=blend_n)
+    addl = compute_additional_team_features(plays, blend_n=blend_n)
+    situ = compute_situational_features(games, blend_n=blend_n)
+
+    addl_cols = [c for c in addl.columns if c not in ("team", "season", "week")]
+    situ_cols = [c for c in situ.columns if c not in ("team", "season", "week")]
 
     tf = base.merge(
-        addl[["team", "season", "week"] + ALL_ADDITIONAL_TEAM_FEATURES],
+        addl[["team", "season", "week"] + addl_cols],
         on=["team", "season", "week"], how="left",
     )
     tf = tf.merge(
-        situ[["team", "season", "week"] + SITUATIONAL_TEAM_FEATURES],
+        situ[["team", "season", "week"] + situ_cols],
         on=["team", "season", "week"], how="left",
     )
     return tf
@@ -178,8 +212,19 @@ def generate_predictions(
     client: bigquery.Client,
     season: int,
     week: int,
+    feature_list: list[str] | None = None,
+    blend_n: int = PRODUCTION_BLEND_N,
 ) -> tuple[pd.DataFrame, dict]:
-    """Train on everything completed before the target week; predict that week."""
+    """
+    Train on everything completed before the target week; predict that week.
+
+    feature_list defaults to PRODUCTION_FEATURE_LIST (the blended set, live
+    since the 2026-09-16 go-live — PROMPT-PRIOR-SEASON-BLEND.md §5). Pass
+    ALL_CURATED_TEAM_FEATURES explicitly to get the old un-blended 23 (e.g.
+    for comparison tooling); run_experiment.py's backtest configs do this via
+    their own explicit feature lists and are unaffected by this default.
+    """
+    curated_features = feature_list if feature_list is not None else PRODUCTION_FEATURE_LIST
     plays = load_plays(client)
     games = load_games(client)
 
@@ -205,15 +250,15 @@ def generate_predictions(
         ignore_index=True,
     )
 
-    team_features = build_team_features(plays_aug, games)
+    team_features = build_team_features(plays_aug, games, blend_n=blend_n)
 
-    matrix_cols = list(dict.fromkeys(ALL_CURATED_TEAM_FEATURES + ["rest_days"]))
+    matrix_cols = list(dict.fromkeys(curated_features + ["rest_days"]))
     game_features = build_game_feature_matrix(games, team_features, team_feature_cols=matrix_cols)
     game_features = add_rest_differential(game_features)
 
     model_feat_cols = (
-        [f"home_{c}" for c in ALL_CURATED_TEAM_FEATURES]
-        + [f"away_{c}" for c in ALL_CURATED_TEAM_FEATURES]
+        [f"home_{c}" for c in curated_features]
+        + [f"away_{c}" for c in curated_features]
         + GAME_CONTEXT_FEATURES
         + ["rest_differential"]
     )
@@ -319,6 +364,11 @@ def build_config_payload(meta: dict, season: int, week: int) -> dict:
             "test_seasons": 1,
             "start_season": int(seasons[0]),
             "end_season": int(seasons[-1]),
+            # Extra field, ignored (not forbidden) by the backend's
+            # MethodologyConfig — recorded here so the config row is honest
+            # about what it actually trained on. See PROMPT-PRIOR-SEASON-BLEND.md
+            # §5 / ADR-013: chosen by backtest, live since 2026-09-16.
+            "blend_n": PRODUCTION_BLEND_N,
         },
         "model": {
             "type": "xgboost",

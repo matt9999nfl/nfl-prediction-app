@@ -230,7 +230,7 @@ RAW_COUNT_COLS = [
 ]
 
 
-def compute_season_to_date_features(plays: pd.DataFrame) -> pd.DataFrame:
+def compute_season_to_date_features(plays: pd.DataFrame, blend_n: int = 4) -> pd.DataFrame:
     """
     Returns a DataFrame keyed by (team, season, week) containing season-to-date
     OL and defensive rate features through week-1 of that week.
@@ -243,6 +243,16 @@ def compute_season_to_date_features(plays: pd.DataFrame) -> pd.DataFrame:
       4. Compute rate features from cumulative counts
       5. Fill Week 1 gaps with prior-season full-season averages
       6. Set sample-size sufficiency flags
+      7. Add `_blend` columns: prior season enters as `blend_n` pseudo-games,
+         fading as the current season accumulates (see _add_blended_rate_features)
+      8. Add `_prev` columns: the prior season's full-season value, unblended,
+         carried on every week (not just week 1) — see _add_prev_season_features
+      9. Add games_played_this_season, the count of this team's own games
+         played before the current week (byes do not count)
+
+    `blend_n` is a parameter, not a constant, so callers can sweep it in a
+    backtest. It has no effect on any column that existed before this feature
+    (those are computed in steps 1-6, untouched by 7-9).
     """
     logger.info("Computing per-game team aggregates …")
     off_pass = _per_game_pass_off(plays)
@@ -298,6 +308,13 @@ def compute_season_to_date_features(plays: pd.DataFrame) -> pd.DataFrame:
 
     # ── Week 1 cold-start fill ────────────────────────────────────────────
     df = _fill_week1_cold_start(df)
+
+    # ── Prior-season-blended features (new columns; old ones untouched) ───
+    df = _add_blended_rate_features(df, blend_n)
+
+    # ── Separate prior-season features (selectable, not blended) ──────────
+    df = _add_prev_season_rate_features(df)
+    df["games_played_this_season"] = df.groupby(["team", "season"]).cumcount()
 
     # ── Sample-size flags ─────────────────────────────────────────────────
     df["ol_pass_sample_size"]   = df["pass_att_cum"]
@@ -363,10 +380,28 @@ def _full_season_averages(df: pd.DataFrame) -> pd.DataFrame:
     avgs["def_rush_epa_allowed_per_att"]     = season_final["def_rush_epa_sum_total"] / (season_final["def_rush_att_total"] + _eps)
     avgs["def_rush_yards_allowed_per_att"]   = season_final["def_rush_yards_sum_total"] / (season_final["def_rush_att_total"] + _eps)
 
-    avgs["pass_att_total"]     = season_final["pass_att_total"].values
-    avgs["rush_att_total"]     = season_final["rush_att_total"].values
-    avgs["def_pass_att_total"] = season_final["def_pass_att_total"].values
-    avgs["def_rush_att_total"] = season_final["def_rush_att_total"].values
+    season_final["sacks_plus_qb_hits_total"] = (
+        season_final["sacks_total"] + season_final["qb_hits_total"]
+    )
+    season_final["def_sacks_plus_qb_hits_total"] = (
+        season_final["def_sacks_total"] + season_final["def_qb_hits_total"]
+    )
+
+    # Raw totals, exposed so blended (prior-N-games) features can scale them
+    # without recomputing per-game aggregates from scratch. Additive only —
+    # nothing above this line is touched.
+    for col in [
+        "pass_att_total", "sacks_total", "qb_hits_total", "pass_epa_sum_total",
+        "rush_att_total", "rush_epa_sum_total", "rush_yards_sum_total",
+        "def_pass_att_total", "def_sacks_total", "def_qb_hits_total",
+        "def_pass_epa_sum_total", "def_rush_att_total", "def_rush_epa_sum_total",
+        "def_rush_yards_sum_total",
+        "sacks_plus_qb_hits_total", "def_sacks_plus_qb_hits_total",
+    ]:
+        avgs[col] = season_final[col].values
+
+    games_played = df.groupby(["team", "season"])["week"].nunique()
+    avgs["games_played"] = avgs.set_index(["team", "season"]).index.map(games_played).values
 
     return avgs.reset_index(drop=True)
 
@@ -409,6 +444,153 @@ def _fill_week1_cold_start(df: pd.DataFrame) -> pd.DataFrame:
                 filled.append(league_avg[feat])
         df.loc[week1_mask, feat] = filled
 
+    return df
+
+
+# ── Prior-season blend (new columns; see PROMPT-PRIOR-SEASON-BLEND.md §3a) ───
+#
+# feature -> (numerator_total_col, denominator_total_col) in _full_season_averages' output
+_RATE_BLEND_DEFS: dict[str, tuple[str, str]] = {
+    "ol_sack_rate":                    ("sacks_total", "pass_att_total"),
+    "ol_qb_hit_rate":                  ("qb_hits_total", "pass_att_total"),
+    "ol_pressure_proxy_rate":          ("sacks_plus_qb_hits_total", "pass_att_total"),
+    "ol_pass_epa_per_att":             ("pass_epa_sum_total", "pass_att_total"),
+    "ol_rush_epa_per_att":             ("rush_epa_sum_total", "rush_att_total"),
+    "ol_rush_yards_per_att":           ("rush_yards_sum_total", "rush_att_total"),
+    "def_sack_rate":                   ("def_sacks_total", "def_pass_att_total"),
+    "def_qb_hit_rate":                 ("def_qb_hits_total", "def_pass_att_total"),
+    "def_pressure_proxy_rate":         ("def_sacks_plus_qb_hits_total", "def_pass_att_total"),
+    "def_pass_epa_allowed_per_att":    ("def_pass_epa_sum_total", "def_pass_att_total"),
+    "def_rush_epa_allowed_per_att":    ("def_rush_epa_sum_total", "def_rush_att_total"),
+    "def_rush_yards_allowed_per_att":  ("def_rush_yards_sum_total", "def_rush_att_total"),
+}
+
+# feature -> cumulative (pre-week) numerator column(s); two features sum a pair.
+_RATE_CUM_NUMERATOR: dict[str, list[str]] = {
+    "ol_sack_rate":                    ["sacks_cum"],
+    "ol_qb_hit_rate":                  ["qb_hits_cum"],
+    "ol_pressure_proxy_rate":          ["sacks_cum", "qb_hits_cum"],
+    "ol_pass_epa_per_att":             ["pass_epa_sum_cum"],
+    "ol_rush_epa_per_att":             ["rush_epa_sum_cum"],
+    "ol_rush_yards_per_att":           ["rush_yards_sum_cum"],
+    "def_sack_rate":                   ["def_sacks_cum"],
+    "def_qb_hit_rate":                 ["def_qb_hits_cum"],
+    "def_pressure_proxy_rate":         ["def_sacks_cum", "def_qb_hits_cum"],
+    "def_pass_epa_allowed_per_att":    ["def_pass_epa_sum_cum"],
+    "def_rush_epa_allowed_per_att":    ["def_rush_epa_sum_cum"],
+    "def_rush_yards_allowed_per_att":  ["def_rush_yards_sum_cum"],
+}
+_RATE_CUM_DENOMINATOR: dict[str, str] = {
+    "ol_sack_rate":                    "pass_att_cum",
+    "ol_qb_hit_rate":                  "pass_att_cum",
+    "ol_pressure_proxy_rate":          "pass_att_cum",
+    "ol_pass_epa_per_att":             "pass_att_cum",
+    "ol_rush_epa_per_att":             "rush_att_cum",
+    "ol_rush_yards_per_att":           "rush_att_cum",
+    "def_sack_rate":                   "def_pass_att_cum",
+    "def_qb_hit_rate":                 "def_pass_att_cum",
+    "def_pressure_proxy_rate":         "def_pass_att_cum",
+    "def_pass_epa_allowed_per_att":    "def_pass_att_cum",
+    "def_rush_epa_allowed_per_att":    "def_rush_att_cum",
+    "def_rush_yards_allowed_per_att":  "def_rush_att_cum",
+}
+
+ALL_TEAM_RATE_FEATURES_BLEND = [f"{f}_blend" for f in ALL_TEAM_RATE_FEATURES]
+ALL_TEAM_RATE_FEATURES_PREV  = [f"{f}_prev"  for f in ALL_TEAM_RATE_FEATURES]
+
+
+def _add_blended_rate_features(df: pd.DataFrame, N: int) -> pd.DataFrame:
+    """
+    Add `<feature>_blend` columns: the prior season enters as `N` pseudo-games,
+    scaled from its full-season totals, fading as the current season's own
+    cumulative totals accumulate.
+
+        prior_scaled = prior_season_total * N / prior_season_games
+        blend(W) = (cum_through_Wminus1 + prior_scaled_num)
+                 / (cum_through_Wminus1 + prior_scaled_den)
+
+    At week 1, cum_through_Wminus1 is 0 for every team, so blend reduces to
+    the prior season's full-season rate — the same value _fill_week1_cold_start
+    substitutes today (both divide the same total_num by the same total_den;
+    the two differ only by the +1e-9 epsilon, which is negligible at realistic
+    sample sizes).
+
+    A team with no prior season (2015, or any (team, season) missing a prior
+    row) falls back to the league-wide average rate for the earliest season,
+    combined with that league's average per-game sample size — so the
+    fallback prior still carries a realistic weight in the blend rather than
+    a token one.
+
+    Adds columns only; does not modify any existing column.
+    """
+    df = df.copy()
+    season_totals = _full_season_averages(df)
+
+    total_cols = [c for c in season_totals.columns if c.endswith("_total")]
+
+    prior_lookup = season_totals.copy()
+    prior_lookup["season"] = prior_lookup["season"] + 1
+    prior_lookup = prior_lookup.rename(columns={c: f"prior_{c}" for c in total_cols})
+    prior_lookup = prior_lookup.rename(columns={"games_played": "prior_games_played"})
+    prior_lookup = prior_lookup[["team", "season", "prior_games_played"] + [f"prior_{c}" for c in total_cols]]
+
+    earliest = season_totals["season"].min()
+    early = season_totals[season_totals["season"] == earliest]
+    league_avg_rate = early[ALL_TEAM_RATE_FEATURES].mean()
+    league_den_pg = (early[total_cols].div(early["games_played"], axis=0)).mean()
+
+    df = df.merge(prior_lookup, on=["team", "season"], how="left")
+    has_prior = df["prior_games_played"].notna() & (df["prior_games_played"] > 0)
+
+    for feat, (num_col, den_col) in _RATE_BLEND_DEFS.items():
+        prior_games = df["prior_games_played"]
+        prior_den_pg = np.where(
+            has_prior, df[f"prior_{den_col}"] / prior_games, league_den_pg[den_col]
+        )
+        prior_num_pg = np.where(
+            has_prior,
+            df[f"prior_{num_col}"] / prior_games,
+            league_avg_rate[feat] * league_den_pg[den_col],
+        )
+
+        cum_num = df[_RATE_CUM_NUMERATOR[feat][0]].copy()
+        for extra in _RATE_CUM_NUMERATOR[feat][1:]:
+            cum_num = cum_num + df[extra]
+        cum_den = df[_RATE_CUM_DENOMINATOR[feat]]
+
+        blended_num = cum_num + N * prior_num_pg
+        blended_den = cum_den + N * prior_den_pg
+        df[f"{feat}_blend"] = blended_num / (blended_den + 1e-9)
+
+    return df.drop(columns=["prior_games_played"] + [f"prior_{c}" for c in total_cols])
+
+
+def _add_prev_season_rate_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add `<feature>_prev` columns: the prior season's full-season value,
+    unblended, carried on every week of season S (not just week 1). These are
+    selectable-but-not-live experiment features (see PROMPT §3b) — they close
+    the capability gap where the catalog could not express a lagged
+    prior-season aggregate (2026-09-09 hypothesis run).
+
+    A team with no prior season falls back to the league-wide average of the
+    earliest available season — the same fallback the week-1 cold start uses.
+    """
+    df = df.copy()
+    season_avgs = _full_season_averages(df)
+
+    prior_lookup = season_avgs.copy()
+    prior_lookup["season"] = prior_lookup["season"] + 1
+
+    earliest = season_avgs["season"].min()
+    league_avg = season_avgs[season_avgs["season"] == earliest][ALL_TEAM_RATE_FEATURES].mean()
+
+    merged = df[["team", "season"]].merge(
+        prior_lookup[["team", "season"] + ALL_TEAM_RATE_FEATURES],
+        on=["team", "season"], how="left",
+    )
+    for feat in ALL_TEAM_RATE_FEATURES:
+        df[f"{feat}_prev"] = merged[feat].fillna(league_avg[feat]).values
     return df
 
 

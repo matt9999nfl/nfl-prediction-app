@@ -65,16 +65,22 @@ from features.ol_metrics import (
     compute_season_to_date_features,
     build_game_feature_matrix,
     ALL_TEAM_RATE_FEATURES,
+    ALL_TEAM_RATE_FEATURES_BLEND,
+    ALL_TEAM_RATE_FEATURES_PREV,
     GAME_CONTEXT_FEATURES,
 )
 from features.comprehensive import (
     compute_additional_team_features,
     ALL_ADDITIONAL_TEAM_FEATURES,
+    ALL_ADDITIONAL_TEAM_FEATURES_BLEND,
+    ALL_ADDITIONAL_TEAM_FEATURES_PREV,
 )
 from features.situational import (
     compute_situational_features,
     add_rest_differential,
     SITUATIONAL_TEAM_FEATURES,
+    SITUATIONAL_FEATURES_BLEND,
+    SITUATIONAL_TEAM_FEATURES_PREV,
 )
 from backtests.walk_forward import (
     run_walk_forward,
@@ -107,10 +113,22 @@ EXPERIMENTS_LOG  = ROOT / "experiments" / "EXPERIMENTS.md"
 
 # Every per-team feature name the existing builders can produce.
 # Used to distinguish curated per-team features from game-context features.
+#
+# _BLEND and _PREV variants (PROMPT-PRIOR-SEASON-BLEND.md §3a/§3b) are listed
+# here too so the config-driven runner can select them for a backtest variant.
+# Selecting the base name still returns the original, current-season-only
+# column — nothing about the original 23 changes.
 ALL_CURATED_TEAM_FEATURES: list[str] = (
     ALL_TEAM_RATE_FEATURES           # 12 OL + defense features from ol_metrics
     + ALL_ADDITIONAL_TEAM_FEATURES   # 8 comprehensive features
     + SITUATIONAL_TEAM_FEATURES      # 3 situational features
+    + ALL_TEAM_RATE_FEATURES_BLEND
+    + ALL_TEAM_RATE_FEATURES_PREV
+    + ALL_ADDITIONAL_TEAM_FEATURES_BLEND
+    + ALL_ADDITIONAL_TEAM_FEATURES_PREV
+    + SITUATIONAL_FEATURES_BLEND
+    + SITUATIONAL_TEAM_FEATURES_PREV
+    + ["games_played_this_season"]
 )
 
 # Model type string → class mapping.
@@ -265,22 +283,37 @@ def _run_dml(client: bigquery.Client, ddl: str, experiment_config_id: str) -> No
 def _build_all_curated_team_features(
     plays: pd.DataFrame,
     games: pd.DataFrame,
+    blend_n: int = 4,
 ) -> pd.DataFrame:
     """
-    Compute the full set of 23 per-team curated features and merge them into
-    a single (team, season, week) DataFrame.
+    Compute the full set of 23 per-team curated features (plus their _blend
+    and _prev counterparts — PROMPT-PRIOR-SEASON-BLEND.md §3a/§3b) and merge
+    them into a single (team, season, week) DataFrame.
+
+    `blend_n` controls only the _blend columns; the original 23 are unaffected.
     """
-    base_features = compute_season_to_date_features(plays)
-    addl_features = compute_additional_team_features(plays)
-    situ_features = compute_situational_features(games)
+    base_features = compute_season_to_date_features(plays, blend_n=blend_n)
+    addl_features = compute_additional_team_features(plays, blend_n=blend_n)
+    situ_features = compute_situational_features(games, blend_n=blend_n)
+
+    addl_cols = (
+        ALL_ADDITIONAL_TEAM_FEATURES
+        + ALL_ADDITIONAL_TEAM_FEATURES_BLEND
+        + ALL_ADDITIONAL_TEAM_FEATURES_PREV
+    )
+    situ_cols = (
+        SITUATIONAL_TEAM_FEATURES
+        + SITUATIONAL_FEATURES_BLEND
+        + SITUATIONAL_TEAM_FEATURES_PREV
+    )
 
     team_features = base_features.merge(
-        addl_features[["team", "season", "week"] + ALL_ADDITIONAL_TEAM_FEATURES],
+        addl_features[["team", "season", "week"] + addl_cols],
         on=["team", "season", "week"],
         how="left",
     )
     team_features = team_features.merge(
-        situ_features[["team", "season", "week"] + SITUATIONAL_TEAM_FEATURES],
+        situ_features[["team", "season", "week"] + situ_cols],
         on=["team", "season", "week"],
         how="left",
     )
@@ -432,6 +465,7 @@ def build_feature_matrix(
     plays: pd.DataFrame,
     games: pd.DataFrame,
     config_features: list[dict],
+    blend_n: int = 4,
 ) -> tuple[pd.DataFrame, list[str]]:
     """
     Build the game-level feature matrix according to the config feature list.
@@ -439,14 +473,18 @@ def build_feature_matrix(
     config_features is the parsed ``features`` JSON from experiment_configs:
         [{"dataset": str, "column": str, "semantic_name": str}, ...]
 
+    blend_n controls the prior-season weight (in pseudo-games) of any
+    selected `_blend` feature; it has no effect on the original 23 or on
+    `_prev` features (PROMPT-PRIOR-SEASON-BLEND.md §3a).
+
     Returns
     -------
     game_features   : DataFrame ready for the walk-forward harness
     model_feat_cols : Ordered list of column names to pass as model_features
     """
     # ── 1. Compute all curated team features ─────────────────────────────────
-    logger.info("Computing curated team features (all 23 per-team) ...")
-    team_features = _build_all_curated_team_features(plays, games)
+    logger.info("Computing curated team features (all 23 per-team, plus blend/prev) ...")
+    team_features = _build_all_curated_team_features(plays, games, blend_n=blend_n)
 
     # ── 2. Identify which curated per-team features the config requests ───────
     curated_entries  = [f for f in config_features if f["dataset"] == "curated"]
@@ -576,6 +614,10 @@ def main() -> None:
     gate_hit_rate  = float(evaluation.get("success_threshold", PHASE2_GATE_HIT_RATE))
     gate_min_games = int(evaluation.get("min_sample", PHASE2_GATE_MIN_GAMES))
 
+    # Prior-season blend weight, in pseudo-games (PROMPT-PRIOR-SEASON-BLEND.md
+    # §3a/§4). Only affects _blend features if the config selects any.
+    blend_n = int(methodology.get("blend_n", 4))
+
     # Resolve model class
     model_type  = model_cfg.get("type", "xgboost")
     model_class = MODEL_REGISTRY.get(model_type)
@@ -645,7 +687,7 @@ def main() -> None:
 
         # ── 4. Build feature matrix ───────────────────────────────────────────
         game_features, model_feat_cols = build_feature_matrix(
-            client, plays, games, config["features"]
+            client, plays, games, config["features"], blend_n=blend_n
         )
         logger.info(
             f"Feature matrix built: {len(game_features):,} games, "

@@ -348,3 +348,71 @@ Two bounded model calls exist: an extractor (prose → slot pre-fills, which are
 - The feature becomes multi-user or public-facing. It is single-user (Matt) by decision; auth, quotas and abuse handling were all deferred on that basis.
 - Live forward prediction lands from its separate project — the experiment object gains a lifecycle and the chat will need to register experiments as live.
 - The governor proves decorative in practice despite the fixture floor, in which case the layer is either strengthened or removed rather than left as wallpaper.
+
+---
+
+## ADR-013 — Prior-season blend for team features past week 1
+**Status:** Accepted
+**Date:** 2026-09-16
+
+### Context
+Every per-team feature (all 23 curated features across `ol_metrics.py`, `comprehensive.py`, `situational.py`) is season-to-date within the current season only. Week 1 is filled with the team's full prior-season average (`_fill_week1_cold_start`), but from week 2 onward the prior season is dropped entirely: week 2's features come from one game (~30-40 plays), `season_win_pct` is 0 or 1 for almost every team, `prior_week_margin` is just the week-1 score differential, and the `MIN_PLAY_SAMPLE = 20` sufficiency flag never fires. Live 2026 week-2 picks came back with 9 of 16 "high" confidence, against 1 of 16 in week 1 — the symptom that prompted this change (see `00-PROJECT-LEAD/PROMPT-PRIOR-SEASON-BLEND.md`, written 2026-09-15).
+
+### Decision
+**Blended features are now live**, as new columns alongside the originals (`<feature>_blend`), so no existing column's meaning changed and every past/future experiment that selects the original 23 by name is unaffected.
+
+**Definition.** The prior season enters as `N` pseudo-games, scaled from that season's full-season totals:
+```
+prior_scaled_num = prior_season_total_num * N / prior_season_games
+prior_scaled_den = prior_season_total_den * N / prior_season_games
+blend_rate(W)    = (cum_num_through_Wminus1 + prior_scaled_num)
+                 / (cum_den_through_Wminus1 + prior_scaled_den)
+```
+Week 1's blend is mathematically the prior season's full-season rate (cum is 0), matching today's cold-start value. Per feature group:
+- **12 `ol_metrics` rate features + 7 `comprehensive` ratio features**: count-based blend as above.
+- **FORM (`rolling_3wk_epa_trend`)**: the rolling window is grouped by team only (not team+season), so it naturally reaches back into the prior season's final games instead of resetting at a season boundary.
+- **`season_win_pct`**: `(W + N * prior_win_pct) / (games_played + N)`.
+- **`prior_week_margin`**: kept as-is (a last-game stat, not an aggregate); a new counterpart, **`avg_margin_blend`**, is added with the same game-count-based blend as `season_win_pct`.
+- **`rest_days`**: no blend — schedule-derived, not a performance stat.
+- A team with no prior season (2015, or any team missing a prior row) falls back to the league-wide average for the earliest season, weighted by that league's real average per-game sample size (not a token weight).
+
+Also added: `<feature>_prev` columns (the prior season's unblended full-season value, carried on every week, for all 23 stats) plus `games_played_this_season`, registered in the feature catalog (`03-BACKEND-API/app/queries/features.py`) as selectable-but-not-live. This closes the capability gap recorded from the 2026-09-09 hypothesis run — the catalog could not express a lagged prior-season aggregate — logged as resolved in `platform.capability_gaps`.
+
+**N chosen by backtest**, through the platform (`run_experiment.py`, walk-forward, 2015-2025, 7 folds, `n_jobs=1`), against a fresh baseline (NOT any May-2026 experiment — those are unreliable per standing ruling):
+
+Tuning (2019-2022, log loss weeks 2-4):
+
+| N | 2 | 4 | 6 | 8 |
+|---|---|---|---|---|
+| Log loss | 0.7184 | 0.7061 | 0.7081 | **0.6928 (best)** |
+
+Confirmation (2023-2025), chosen N=8 vs. baseline, pre-declared bar (log loss weeks 2-4 lower AND all-weeks not higher) — **met**:
+
+| | LogLoss wk2-4 | LogLoss all | ATS% wk2-4 | ATS% all | Hi-conf share wk2 | Games (wk2-4/all) |
+|---|---|---|---|---|---|---|
+| 2023 | 0.7429 / 0.7320 | 0.7483 / 0.7509 | 51.2% / 46.5% | 46.1% / 48.1% | 62.5% / 62.5% | 43/258 |
+| 2024 | 0.7072 / 0.7269 | 0.7152 / 0.7524 | 57.4% / 53.2% | 53.7% / 50.0% | 37.5% / 56.2% | 47/268 |
+| 2025 | 0.6235 / 0.7312 | 0.7423 / 0.7406 | 64.6% / 47.9% | 49.8% / 48.0% | 62.5% / 62.5% | 48/271 |
+| **Combined** | **0.6892 / 0.7300** | **0.7351 / 0.7479** | **58.0% / 49.3%** | **49.9% / 48.7%** | 54.2% / 60.4% | 138/797 |
+
+(each cell: N=8 / baseline). ATS is context, not the gate.
+
+**Result, not a condition:** the log loss of a constant 0.5 prediction on the same 2023-2025 games (computed from the stored `backtest_predictions`, not derived) is exactly ln(2) ≈ 0.6931, for both the weeks-2-4 subset (n=138) and all weeks (n=797) — a constant-probability model's log loss does not depend on the true labels. Both the baseline (0.7300 / 0.7479) and N=8 (0.6892 / 0.7351) are worse than this null on all-weeks; N=8 finally beats it on weeks 2-4, baseline does not. Recorded for honesty about how much room there still is, not as a pass/fail gate.
+
+`predict_upcoming.py` and `run_production_refresh.py` now train and predict on the blended set (`PRODUCTION_FEATURE_LIST`, `PRODUCTION_BLEND_N = 8`) by default. `run_experiment.py`'s backtest configs are unaffected — they pass an explicit feature list, so the original 23 remain fully selectable and are what any future baseline experiment should use.
+
+### Alternatives Considered
+- **Replace the original 23 columns in place** — rejected. The runner selects features by name from a config; silently redefining an existing name changes every past and future experiment that references it.
+- **Drop `prior_week_margin` in favor of a blended replacement** — rejected. It's a last-game stat, not an aggregate; blending it would answer a different question. Added `avg_margin_blend` alongside it instead.
+- **Tune N on the same seasons used to confirm the bar** — rejected as self-fooling; split into tuning (2019-2022) and confirmation (2023-2025) sets, decided in advance.
+
+### Consequences
+- Roster, QB, and coaching changes between seasons are not modeled — the prior season's stats are assumed to still describe the team. Known limitation of the prior; not fixable by this change.
+- The two other survivals of the retired 54%/OL framing (`success_threshold: 0.54` written by `predict_upcoming.py`, charter A-1) are untouched — this change did not touch that function beyond adding the `blend_n` field to `methodology`.
+- The roof bug (`roof_dome` checks `retractable`, data uses `closed`/`open`) and the weather-at-prediction-time mismatch are both still open, deliberately not folded into this change so the backtest isolated one variable.
+- Historical experiments that referenced the original 23 by name are unaffected — none of their columns changed value or meaning.
+
+### Revisit If
+- A season with an expanded or shortened schedule changes what "N pseudo-games" should mean relative to a full season.
+- The roster-change limitation turns out to matter more than assumed (e.g. a backtest slicing on offseason QB changes shows the blend actively hurts those teams).
+- N=8 stops clearing the bar on a later confirmation window — re-run the tuning/confirmation split rather than hand-adjusting N.

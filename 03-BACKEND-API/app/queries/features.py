@@ -59,6 +59,42 @@ _PER_TEAM_FEATURES: list[tuple[str, str]] = [
     ("season_win_pct",                  "Season-to-date win percentage"),
 ]
 
+# ── Prior-season blend / prior-season-only features ───────────────────────────
+#
+# Closes the capability gap recorded from the 2026-09-09 hypothesis run: the
+# catalog could not express a lagged prior-season aggregate (see
+# platform.capability_gaps and PROMPT-PRIOR-SEASON-BLEND.md §3b).
+#
+# `_blend` features weight the prior season as N pseudo-games and fade as the
+# current season accumulates; they are what live serving uses if/once the
+# blended-features go-live is approved. `_prev` features are the prior
+# season's unblended full-season value, unchanged all season — selectable for
+# experiments, not used in live serving.
+#
+# Excluded from the generic loop below because they don't get a plain
+# "<base>_blend" column: rest_days has no blend at all (schedule-derived, not
+# a performance stat); season_win_pct and prior_week_margin get bespoke
+# handling below (prior_week_margin's counterpart is a new feature,
+# avg_margin_blend, not "prior_week_margin_blend" — see situational.py);
+# qb_epa_per_dropback isn't produced by any feature builder (pre-existing gap
+# in _PER_TEAM_FEATURES, not introduced here).
+_PRIOR_SEASON_BLEND_FEATURES: list[tuple[str, str]] = [
+    (f"{base}_blend", f"{desc} — blended with N pseudo-games of the prior season")
+    for base, desc in _PER_TEAM_FEATURES
+    if base not in ("rest_days", "qb_epa_per_dropback", "season_win_pct", "prior_week_margin")
+] + [
+    ("season_win_pct_blend", "Season-to-date win percentage, blended with N pseudo-games of the prior season's win percentage"),
+    ("avg_margin_blend", "Average point margin, blended with N pseudo-games of the prior season's average margin"),
+]
+
+_PRIOR_SEASON_PREV_FEATURES: list[tuple[str, str]] = [
+    (f"{base}_prev", f"{desc.split(', season-to-date')[0]}, prior season's full-season value")
+    for base, desc in _PER_TEAM_FEATURES
+    if base != "qb_epa_per_dropback"
+] + [
+    ("games_played_this_season", "Number of this team's own games played before the current week (byes excluded)"),
+]
+
 _GAME_CONTEXT_FEATURES: list[tuple[str, str]] = [
     ("rest_differential",   "home_rest_days minus away_rest_days"),
     ("div_game",            "Divisional matchup flag"),
@@ -187,7 +223,9 @@ def _build_catalog() -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
 
     for side in ("home", "away"):
-        for base, desc in _PER_TEAM_FEATURES:
+        for base, desc in (
+            _PER_TEAM_FEATURES + _PRIOR_SEASON_BLEND_FEATURES + _PRIOR_SEASON_PREV_FEATURES
+        ):
             name = f"{side}_{base}"
             catalog.append({
                 "feature_id":    f"curated.{name}",

@@ -75,9 +75,11 @@ def _stub_dependencies():
         "features.ol_metrics": dict(
             load_plays=None, load_games=None, compute_season_to_date_features=None,
             build_game_feature_matrix=None, ALL_TEAM_RATE_FEATURES=[],
+            ALL_TEAM_RATE_FEATURES_BLEND=[],
             GAME_CONTEXT_FEATURES=[]),
         "features.comprehensive": dict(
-            compute_additional_team_features=None, ALL_ADDITIONAL_TEAM_FEATURES=[]),
+            compute_additional_team_features=None, ALL_ADDITIONAL_TEAM_FEATURES=[],
+            ALL_ADDITIONAL_TEAM_FEATURES_BLEND=[]),
         "features.situational": dict(
             compute_situational_features=None, add_rest_differential=None,
             SITUATIONAL_TEAM_FEATURES=[]),

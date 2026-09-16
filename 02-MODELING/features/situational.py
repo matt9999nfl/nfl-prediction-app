@@ -44,24 +44,46 @@ SITUATIONAL_GAME_FEATURES = [
     "rest_differential",
 ]
 
+# ── Prior-season blend / prior-season-only columns (PROMPT §3a/§3b) ─────────
+#
+# rest_days has no blend counterpart — it is schedule-derived, not a
+# performance stat, so a prior season carries no information about it.
+SITUATIONAL_FEATURES_BLEND = [
+    "season_win_pct_blend",
+    "avg_margin_blend",   # new counterpart to prior_week_margin, which is a
+                           # last-game stat and is kept as-is (not blended)
+]
+SITUATIONAL_TEAM_FEATURES_PREV = [f"{f}_prev" for f in SITUATIONAL_TEAM_FEATURES]
+
 
 # ── Main computation ───────────────────────────────────────────────────────────
 
-def compute_situational_features(games: pd.DataFrame) -> pd.DataFrame:
+def compute_situational_features(games: pd.DataFrame, blend_n: int = 4) -> pd.DataFrame:
     """
     Compute situational/form features per (team, season, week).
 
     Returns a DataFrame with columns:
-        team, season, week, rest_days, prior_week_margin, season_win_pct
+        team, season, week, rest_days, prior_week_margin, season_win_pct,
+        season_win_pct_blend, avg_margin_blend,
+        rest_days_prev, prior_week_margin_prev, season_win_pct_prev
 
     All values reflect data available BEFORE the game in that (season, week)
     — i.e., they are safe to use as features without look-ahead leakage.
+
+    `_blend` columns (see PROMPT-PRIOR-SEASON-BLEND.md §3a) weight the prior
+    season as `blend_n` pseudo-games:
+        season_win_pct_blend = (W + N * prior_win_pct) / (games_played + N)
+        avg_margin_blend     = (margin_sum + N * prior_avg_margin) / (games_played + N)
+    `_prev` columns (§3b) are the prior season's unblended full-season value,
+    carried on every week — closing the capability gap where the catalog
+    could not express a lagged prior-season aggregate.
 
     Parameters
     ----------
     games : curated.games DataFrame.
             Must include: game_id, season, week, game_date,
                           home_team, away_team, home_score, away_score
+    blend_n : prior season's weight in `_blend` columns, in pseudo-games.
     """
     logger.info("Computing situational/form features ...")
 
@@ -139,11 +161,67 @@ def compute_situational_features(games: pd.DataFrame) -> pd.DataFrame:
         0.5,  # neutral prior when no prior games
     )
 
+    # ── 4b. Cumulative margin sum and games played, for avg_margin_blend ───
+    team_games["games_played_so_far"] = team_games.groupby(["team", "season"]).cumcount()
+    team_games["cum_margin_through_prior"] = (
+        team_games.groupby(["team", "season"])["margin"].cumsum() - team_games["margin"]
+    )
+
+    # ── 4c. Prior-season full-season totals, for _blend and _prev ──────────
+    season_totals = (
+        team_games.groupby(["team", "season"])
+        .agg(
+            season_wins=("win", "sum"),
+            season_losses=("loss", "sum"),
+            season_margin_sum=("margin", "sum"),
+            season_games=("margin", "count"),
+            season_avg_rest=("rest_days_raw", "mean"),
+        )
+        .reset_index()
+    )
+    decided = season_totals["season_wins"] + season_totals["season_losses"]
+    season_totals["season_win_pct_full"] = np.where(decided > 0, season_totals["season_wins"] / decided, 0.5)
+    season_totals["season_avg_margin"] = season_totals["season_margin_sum"] / season_totals["season_games"]
+
+    prior_lookup = season_totals.copy()
+    prior_lookup["season"] = prior_lookup["season"] + 1
+    prior_lookup = prior_lookup.rename(columns={
+        "season_win_pct_full": "prior_win_pct",
+        "season_avg_margin":   "prior_avg_margin",
+        "season_avg_rest":     "prior_avg_rest",
+    })[["team", "season", "prior_win_pct", "prior_avg_margin", "prior_avg_rest"]]
+
+    earliest = season_totals["season"].min()
+    league_avg_margin = season_totals.loc[season_totals["season"] == earliest, "season_avg_margin"].mean()
+    league_avg_rest = season_totals.loc[season_totals["season"] == earliest, "season_avg_rest"].mean()
+
+    team_games = team_games.merge(prior_lookup, on=["team", "season"], how="left")
+    team_games["prior_win_pct"] = team_games["prior_win_pct"].fillna(0.5)
+    team_games["prior_avg_margin"] = team_games["prior_avg_margin"].fillna(league_avg_margin)
+    team_games["prior_avg_rest"] = team_games["prior_avg_rest"].fillna(league_avg_rest)
+
+    N = blend_n
+    win_denom = team_games["cum_wins_through_prior"] + team_games["cum_losses_through_prior"]
+    team_games["season_win_pct_blend"] = (
+        team_games["cum_wins_through_prior"] + N * team_games["prior_win_pct"]
+    ) / (win_denom + N)
+    team_games["avg_margin_blend"] = (
+        team_games["cum_margin_through_prior"] + N * team_games["prior_avg_margin"]
+    ) / (team_games["games_played_so_far"] + N)
+
+    # ── 4d. _prev columns: prior season's unblended full-season value ──────
+    team_games["rest_days_prev"] = team_games["prior_avg_rest"]
+    team_games["prior_week_margin_prev"] = team_games["prior_avg_margin"]
+    team_games["season_win_pct_prev"] = team_games["prior_win_pct"]
+
     # ── 5. Rename to final feature names ──────────────────────────────────
-    result = team_games[[
+    keep = [
         "team", "season", "week",
         "rest_days_raw", "prior_week_margin_raw", "season_win_pct_raw",
-    ]].copy()
+        "season_win_pct_blend", "avg_margin_blend",
+        "rest_days_prev", "prior_week_margin_prev", "season_win_pct_prev",
+    ]
+    result = team_games[keep].copy()
     result = result.rename(columns={
         "rest_days_raw":          "rest_days",
         "prior_week_margin_raw":  "prior_week_margin",
