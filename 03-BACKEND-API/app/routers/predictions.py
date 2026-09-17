@@ -284,16 +284,33 @@ def get_game_explanation(
             },
         )
 
-    features = [ExplanationFeature.model_validate(r) for r in rows]
-    top_drivers = sorted(features, key=lambda f: f.abs_rank)[:5]
     head = rows[0]
+    predicted_side = head["predicted_side"]
+    live_predicted_side = head["live_predicted_side"]
+    side_matches_live_pick = predicted_side == live_predicted_side
+
+    # The live pick is authoritative (2026-09-17 decision): re-sign
+    # pick_direction_contribution toward live_predicted_side, not this run's
+    # own (possibly wrong) predicted_side. contribution_logodds itself, and
+    # family_matchup (built from it below), are unaffected — only the
+    # pick-direction view changes meaning.
+    sign = 1.0 if side_matches_live_pick else -1.0
+    signed_rows = [
+        {**r, "pick_direction_contribution": r["pick_direction_contribution"] * sign}
+        for r in rows
+    ]
+
+    features = [ExplanationFeature.model_validate(r) for r in signed_rows]
+    top_drivers = sorted(features, key=lambda f: f.abs_rank)[:5]
 
     return GameExplanationResponse(
         game_id=game_id,
         experiment_id=prod_exp["experiment_id"],
         run_id=head["run_id"],
         model_name=head["model_name"],
-        predicted_side=head["predicted_side"],
+        predicted_side=predicted_side,
+        live_predicted_side=live_predicted_side,
+        side_matches_live_pick=side_matches_live_pick,
         predicted_home_cover_prob=head["predicted_home_cover_prob"],
         bias_logodds=head["bias_logodds"],
         clean_forward=head["clean_forward"],

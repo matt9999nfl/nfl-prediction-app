@@ -74,10 +74,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-import sklearn
-import xgboost
 from google.cloud import bigquery
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -90,6 +87,7 @@ from backtests.predict_upcoming import (  # noqa: E402
     PRODUCTION_FEATURE_LIST,
     generate_predictions,
 )
+from backtests.environment import environment_fingerprint  # noqa: E402
 from backtests.explanations import build_explanations, feature_list_hash  # noqa: E402
 from backtests.explanations_bq import (  # noqa: E402
     ensure_explanations_table,
@@ -177,25 +175,6 @@ def compare_predictions(stored: pd.DataFrame, reproduced: pd.DataFrame) -> pd.Da
     return m.sort_values("game_id").reset_index(drop=True)
 
 
-def environment_fingerprint() -> dict:
-    """
-    The environment this run's reproduction actually executed in — recorded
-    next to every guard run's diff table (2026-09-17: the guard mismatches on
-    Windows even with identical pinned versions, so which OS ran it matters
-    as much as which versions did).
-    """
-    return {
-        "platform_system": platform.system(),
-        "platform_release": platform.release(),
-        "platform_machine": platform.machine(),
-        "python_version": platform.python_version(),
-        "pandas_version": pd.__version__,
-        "numpy_version": np.__version__,
-        "scikit_learn_version": sklearn.__version__,
-        "xgboost_version": xgboost.__version__,
-    }
-
-
 def _check_linux(allow_non_linux: bool) -> None:
     """
     Refuse to run the reproduction guard anywhere but Linux.
@@ -230,6 +209,7 @@ def run_reproduction_guard(
     week: int,
     tolerance: float = REPRODUCTION_TOLERANCE,
     allow_non_linux: bool = False,
+    curated_dataset: str = "curated",
 ) -> tuple[bool, pd.DataFrame, pd.DataFrame, dict]:
     """
     Returns (passed, diff_table, reproduced_preds, meta).
@@ -240,17 +220,23 @@ def run_reproduction_guard(
 
     Refuses to run anywhere but Linux (see _check_linux) unless
     allow_non_linux=True — that parameter exists only for unit tests.
+
+    curated_dataset defaults to "curated". Pass a recovered snapshot dataset
+    (e.g. "scratch_timetravel") to reproduce against data as it stood before
+    a later rebuild changed the live curated tables.
     """
     _check_linux(allow_non_linux)
     stored = load_stored_predictions(client, season, week)
     feature_list, blend_n = resolve_historical_config(season, week)
     logger.info(
-        "Reproducing %d week %d with %d features (blend_n=%s, %s)",
+        "Reproducing %d week %d with %d features (blend_n=%s, %s) against %s",
         season, week, len(feature_list), blend_n,
         "unblended" if feature_list is ALL_CURATED_TEAM_FEATURES else "blended",
+        curated_dataset,
     )
     reproduced, meta = generate_predictions(
         client, season, week, feature_list=feature_list, blend_n=blend_n,
+        curated_dataset=curated_dataset,
     )
 
     diff_table = compare_predictions(stored, reproduced)
@@ -281,6 +267,13 @@ def main() -> int:
     ap.add_argument("--season", type=int, required=True)
     ap.add_argument("--week", type=int, required=True)
     ap.add_argument("--tolerance", type=float, default=REPRODUCTION_TOLERANCE)
+    ap.add_argument(
+        "--curated-dataset", default="curated",
+        help="BigQuery dataset to load games/plays from, laid out like curated "
+             "(default: curated). Pass a recovered snapshot dataset (e.g. "
+             "scratch_timetravel) to reproduce against data as it stood before "
+             "a later rebuild changed the live curated tables.",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Run the guard and report; write nothing regardless of outcome.")
     ap.add_argument(
         "--approximate", action="store_true",
@@ -300,6 +293,7 @@ def main() -> int:
     # refuses non-Linux unconditionally for a real invocation of this script.
     passed, diff_table, reproduced, meta = run_reproduction_guard(
         client, args.season, args.week, tolerance=args.tolerance,
+        curated_dataset=args.curated_dataset,
     )
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)

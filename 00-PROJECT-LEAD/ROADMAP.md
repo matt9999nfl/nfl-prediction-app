@@ -1,10 +1,38 @@
 # ROADMAP — NFL Prediction App
 
 **Owner:** PROJECT-LEAD
-**Last updated:** 2026-09-10
+**Last updated:** 2026-09-10 (Phase table and below); **Current section added 2026-09-18**
 **Framing:** Read `PROJECT-CHARTER.md` first. This is a **platform-building
 project**; modelling happens later, through the platform. This document does not
 restate that — it assumes it.
+
+## Current (2026-09-18)
+
+Everything below "Phase overview" predates 2026-09-15 and describes Phase 7's
+initial live launch. Since then, the priority has been **per-game pick
+explanations and testing on past results** (`STATE.md`, "Matt's current
+priority" — full checklist there; `PROMPT-PICK-EXPLANATIONS-AND-EDGE-LAB.md`).
+
+- **2026-09-16 — ADR-013.** Prior-season blend (N=8) went live for team
+  features past week 1.
+- **2026-09-17 — Stage 1 (live path).** Per-game TreeSHAP explanations shipped
+  for live picks: API endpoint, "Why this pick" panel, family matchup,
+  league percentiles, backfill tooling (`explain_picks.py`). Investigation
+  found Windows and Linux produce different floating-point results from
+  identical pinned package versions — reproductions now run in the
+  production Linux image only (`CLAUDE.md`).
+- **2026-09-18 — Stage 1 finish (ADR-014).** BigQuery time travel recovered
+  the pre-09-15 `curated` tables; 2015–2025 data confirmed unchanged by the
+  rebuild. Fixed the live app naming a pick it didn't make (approximate
+  explanations disagreeing with the live pick). Fixed `league_pctile` for
+  QB blend features. Backtests (`walk_forward.py`/`run_experiment.py`) now
+  store explanations for every test game. Every run now records the
+  environment (platform, package versions, git SHA) that produced it.
+  Details: `00-PROJECT-LEAD/HANDOFF-2026-09-18-stage1-finish.md`.
+- **Next:** `PROMPT-WEEK1-ANALYSIS.md` (patterns across the week-1 picks and
+  how they relate to the market) — not yet written as of this entry.
+
+---
 
 **Current status:** Phases 1–5 complete. **Phase 7 (In-Season Operations) is
 active** and, as of 2026-09-10, live. Phase 6 (Hypothesis Chat) is built but

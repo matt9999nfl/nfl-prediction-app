@@ -29,7 +29,10 @@ export function WhyThisPick({ gameId, homeTeam, awayTeam }: WhyThisPickProps) {
     1e-9,
     ...data.top_drivers.map((d) => Math.abs(d.pick_direction_contribution)),
   )
-  const pickedTeam = data.predicted_side === 'home' ? homeTeam : awayTeam
+  // The heading always names the live pick, never this explanation's own
+  // (possibly wrong) model lean — see side_matches_live_pick below.
+  const pickedTeam = data.live_predicted_side === 'home' ? homeTeam : awayTeam
+  const explanationLeansTeam = data.predicted_side === 'home' ? homeTeam : awayTeam
 
   return (
     <Card>
@@ -48,6 +51,12 @@ export function WhyThisPick({ gameId, homeTeam, awayTeam }: WhyThisPickProps) {
             {data.reproduction_max_diff !== null &&
               ` (max diff ${data.reproduction_max_diff.toFixed(3)})`}
             . These drivers are an approximation, not the model that made the live pick.
+          </p>
+        )}
+        {!data.side_matches_live_pick && (
+          <p className="text-xs text-red-600 dark:text-red-400 font-medium">
+            The approximate model leans toward {explanationLeansTeam}. These drivers
+            don't explain this pick.
           </p>
         )}
 
@@ -94,6 +103,7 @@ function DriverBar({ driver, maxAbs }: { driver: ExplanationFeature; maxAbs: num
       <div className="flex items-center justify-between mb-1 gap-2">
         <span className="font-medium">
           {driver.family}
+          <span className="text-muted-foreground font-normal"> · {driver.feature}</span>
           {driver.side !== 'game' && (
             <span className="text-muted-foreground font-normal"> ({driver.side})</span>
           )}

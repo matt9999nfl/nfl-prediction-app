@@ -41,12 +41,24 @@ class GameExplanationResponse(BaseModel):
     exactly (STAGE 1.6) — the UI must label these as approximate. clean_forward
     means only "not regenerated after this game kicked off"; it is unrelated
     to is_approximate.
+
+    The live pick is authoritative (2026-09-17 decision, STATE.md): an
+    approximate explanation can lean the other way from the pick the app
+    actually made. `predicted_side` is this explanation's own model lean;
+    `live_predicted_side` is the pick actually served by
+    GET /api/v1/predictions; `side_matches_live_pick` is False exactly when
+    they disagree. The UI must always name `live_predicted_side` in the
+    heading, never `predicted_side`, and show a warning when they disagree.
+    `top_drivers`/`all_features` carry `pick_direction_contribution` re-signed
+    relative to `live_predicted_side`, not this run's own `predicted_side`.
     """
     game_id: str
     experiment_id: str
     run_id: str
     model_name: str
     predicted_side: Literal["home", "away"]
+    live_predicted_side: Literal["home", "away"]
+    side_matches_live_pick: bool
     predicted_home_cover_prob: float
     bias_logodds: float
     clean_forward: Optional[bool] = None

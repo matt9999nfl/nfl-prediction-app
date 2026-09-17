@@ -56,6 +56,39 @@ def test_happy_path_shape(client, mock_bq):
     assert [d["feature"] for d in data["top_drivers"]] == [
         "home_ol_sack_rate_blend", "away_def_sack_rate_blend", "temp",
     ]
+    # predicted_side and live_predicted_side agree here (both "home")
+    assert data["live_predicted_side"] == "home"
+    assert data["side_matches_live_pick"] is True
+    assert data["all_features"][0]["pick_direction_contribution"] == 0.12
+
+
+def test_wrong_side_panel_names_the_live_pick_and_flips_pick_direction(client, mock_bq):
+    """
+    2026-09-17 fix: an approximate explanation that leans away from the live
+    pick (e.g. 2026_01_ATL_PIT — panel read "Why this pick — ATL" while the
+    live pick was PIT) must surface the live pick, flag the mismatch, and
+    re-sign pick_direction_contribution toward the live pick, not this run's
+    own lean.
+    """
+    rows = [
+        make_explanation_row(
+            predicted_side="away", live_predicted_side="home",
+            is_approximate=True, reproduction_max_diff=0.037,
+            feature="home_ol_sack_rate_blend", side="home",
+            contribution_logodds=0.12, pick_direction_contribution=0.12, abs_rank=1,
+        ),
+    ]
+    with patch("app.routers.predictions.pq.get_production_experiment", return_value=PROD_EXP), \
+         patch("app.routers.predictions.eq.get_game_explanation_rows", return_value=rows):
+        resp = client.get("/api/v1/predictions/2026_01_ATL_PIT/explanation")
+
+    data = resp.json()
+    assert data["predicted_side"] == "away"
+    assert data["live_predicted_side"] == "home"
+    assert data["side_matches_live_pick"] is False
+    # re-signed toward the live pick (home): was +0.12 toward "away", now -0.12
+    assert data["all_features"][0]["pick_direction_contribution"] == -0.12
+    assert data["top_drivers"][0]["pick_direction_contribution"] == -0.12
 
 
 def test_family_matchup_excludes_game_side_and_nets_home_away(client, mock_bq):

@@ -91,6 +91,7 @@ from features.situational import (  # noqa: E402
 )
 from models.xgb_v2 import OLXGBModelV2  # noqa: E402
 from backtests.bq_writer import PREDS_SCHEMA, PREDS_TABLE, RUNS_TABLE  # noqa: E402
+from backtests.environment import backtest_runs_env_columns  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -214,6 +215,7 @@ def generate_predictions(
     week: int,
     feature_list: list[str] | None = None,
     blend_n: int = PRODUCTION_BLEND_N,
+    curated_dataset: str = "curated",
 ) -> tuple[pd.DataFrame, dict]:
     """
     Train on everything completed before the target week; predict that week.
@@ -223,15 +225,19 @@ def generate_predictions(
     ALL_CURATED_TEAM_FEATURES explicitly to get the old un-blended 23 (e.g.
     for comparison tooling); run_experiment.py's backtest configs do this via
     their own explicit feature lists and are unaffected by this default.
+
+    curated_dataset defaults to "curated". Pass a recovered snapshot dataset
+    (e.g. "scratch_timetravel") laid out the same way to reproduce
+    predictions against data as it stood at a prior point in time.
     """
     curated_features = feature_list if feature_list is not None else PRODUCTION_FEATURE_LIST
-    plays = load_plays(client)
-    games = load_games(client)
+    plays = load_plays(client, dataset=curated_dataset)
+    games = load_games(client, dataset=curated_dataset)
 
     slate = games[(games["season"] == season) & (games["week"] == week)].copy()
     if slate.empty:
         raise SystemExit(
-            f"No games found in curated.games for season {season} week {week}. "
+            f"No games found in {curated_dataset}.games for season {season} week {week}. "
             "Check the fixtures loaded before running."
         )
     logger.info("Target slate: %d games — %s week %d", len(slate), season, week)
@@ -592,6 +598,7 @@ def build_run_row(run_id: str, meta: dict, season: int, week: int) -> dict:
                                         "success_threshold": 0.54,
                                         "min_sample": 250}),
         "feature_importances": json.dumps(meta.get("feature_importance") or []),
+        **backtest_runs_env_columns(),
     }
 
 

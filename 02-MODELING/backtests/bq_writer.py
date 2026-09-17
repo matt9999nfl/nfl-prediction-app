@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 import pandas as pd
 from google.cloud import bigquery
 
+from backtests.environment import backtest_runs_env_columns
+
 logger = logging.getLogger(__name__)
 
 PROJECT  = "nfl-model-471509"
@@ -73,6 +75,14 @@ RUNS_SCHEMA = [
     bigquery.SchemaField("notes",                "STRING",    mode="NULLABLE"),
     bigquery.SchemaField("success_criteria",     "JSON",      mode="NULLABLE"),
     bigquery.SchemaField("feature_importances",  "JSON",      mode="NULLABLE"),
+    # Environment fingerprint (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §5) — new,
+    # nullable columns so every run records what produced it. All NULL on rows
+    # written before this stage.
+    bigquery.SchemaField("env_platform",         "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("env_python",           "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("env_packages",         "JSON",      mode="NULLABLE"),
+    bigquery.SchemaField("git_sha",              "STRING",    mode="NULLABLE"),
+    bigquery.SchemaField("cloud_run_execution",  "STRING",    mode="NULLABLE"),
 ]
 
 PREDS_SCHEMA = [
@@ -107,6 +117,28 @@ def _alter_predictions_table(client: bigquery.Client) -> None:
         logger.info("backtest_predictions: ensured column run_id (STRING)")
     except Exception as e:
         logger.warning(f"backtest_predictions: ALTER TABLE for run_id raised: {e}")
+
+
+def _alter_runs_table(client: bigquery.Client) -> None:
+    """
+    Idempotently add the environment-fingerprint columns to
+    experiments.backtest_runs (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §5).
+    create_table(exists_ok=True) does not alter an existing table's schema,
+    so a new column here needs its own ALTER TABLE, same as run_id above.
+    """
+    ddl = f"""
+        ALTER TABLE `{RUNS_TABLE}`
+        ADD COLUMN IF NOT EXISTS `env_platform` STRING,
+        ADD COLUMN IF NOT EXISTS `env_python` STRING,
+        ADD COLUMN IF NOT EXISTS `env_packages` JSON,
+        ADD COLUMN IF NOT EXISTS `git_sha` STRING,
+        ADD COLUMN IF NOT EXISTS `cloud_run_execution` STRING
+    """
+    try:
+        client.query(ddl).result()
+        logger.info("backtest_runs: ensured env_* / git_sha / cloud_run_execution columns")
+    except Exception as e:
+        logger.warning(f"backtest_runs: ALTER TABLE for env columns raised: {e}")
 
 
 def _ensure_dataset(client: bigquery.Client) -> None:
@@ -209,6 +241,7 @@ def write_backtest_run(
         "notes":                 notes or None,
         "success_criteria":      json.dumps(success_criteria) if success_criteria is not None else None,
         "feature_importances":   json.dumps(feature_importances) if feature_importances is not None else None,
+        **backtest_runs_env_columns(),
     }
 
     errors = client.insert_rows_json(RUNS_TABLE, [row])
@@ -250,6 +283,7 @@ def write_error_run(
         "status":                "failed",
         "error_message":         error_message[:4096],  # truncate for safety
         "training_window_years": training_window_years,
+        **backtest_runs_env_columns(),
     }
     try:
         errors = client.insert_rows_json(RUNS_TABLE, [row])
@@ -318,7 +352,8 @@ def setup_experiments_tables(client: bigquery.Client) -> None:
     """Idempotently create/update the experiments dataset and both output tables.
 
     backtest_runs already contains all required columns (including run_id, status,
-    feature_importances, etc.) from the Phase 2+ schema recreation.
+    feature_importances, etc.) from the Phase 2+ schema recreation. Its env_* /
+    git_sha / cloud_run_execution columns are added idempotently via ALTER TABLE.
 
     backtest_predictions gets run_id added idempotently via ALTER TABLE.
     """
@@ -333,5 +368,7 @@ def setup_experiments_tables(client: bigquery.Client) -> None:
         partition_field="season",
         clustering_fields=["experiment_id", "fold"],
     )
+    # Ensure the env fingerprint columns exist on backtest_runs (safe to call repeatedly)
+    _alter_runs_table(client)
     # Ensure run_id exists in predictions (safe to call repeatedly)
     _alter_predictions_table(client)

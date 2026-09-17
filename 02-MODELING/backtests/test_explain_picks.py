@@ -54,7 +54,7 @@ def test_guard_refuses_on_a_1e_minus_3_perturbation(monkeypatch):
     monkeypatch.setattr(ep, "load_stored_predictions", lambda client, season, week: stored)
     monkeypatch.setattr(
         ep, "generate_predictions",
-        lambda client, season, week, feature_list=None, blend_n=None: (reproduced, {"_model": None}),
+        lambda client, season, week, feature_list=None, blend_n=None, curated_dataset="curated": (reproduced, {"_model": None}),
     )
 
     passed, diff_table, repro, meta = ep.run_reproduction_guard(client=object(), season=2026, week=1, allow_non_linux=True)
@@ -71,7 +71,7 @@ def test_guard_passes_within_tolerance(monkeypatch):
     monkeypatch.setattr(ep, "load_stored_predictions", lambda client, season, week: stored)
     monkeypatch.setattr(
         ep, "generate_predictions",
-        lambda client, season, week, feature_list=None, blend_n=None: (reproduced, {"_model": None}),
+        lambda client, season, week, feature_list=None, blend_n=None, curated_dataset="curated": (reproduced, {"_model": None}),
     )
 
     passed, diff_table, repro, meta = ep.run_reproduction_guard(client=object(), season=2026, week=1, allow_non_linux=True)
@@ -87,7 +87,7 @@ def test_guard_fails_on_a_side_flip_even_with_small_prob_diff(monkeypatch):
     monkeypatch.setattr(ep, "load_stored_predictions", lambda client, season, week: stored)
     monkeypatch.setattr(
         ep, "generate_predictions",
-        lambda client, season, week, feature_list=None, blend_n=None: (reproduced, {"_model": None}),
+        lambda client, season, week, feature_list=None, blend_n=None, curated_dataset="curated": (reproduced, {"_model": None}),
     )
 
     passed, diff_table, repro, meta = ep.run_reproduction_guard(client=object(), season=2026, week=1, allow_non_linux=True)
@@ -101,7 +101,7 @@ def test_guard_fails_when_a_game_is_missing_from_reproduction(monkeypatch):
     monkeypatch.setattr(ep, "load_stored_predictions", lambda client, season, week: stored)
     monkeypatch.setattr(
         ep, "generate_predictions",
-        lambda client, season, week, feature_list=None, blend_n=None: (reproduced, {"_model": None}),
+        lambda client, season, week, feature_list=None, blend_n=None, curated_dataset="curated": (reproduced, {"_model": None}),
     )
 
     passed, diff_table, repro, meta = ep.run_reproduction_guard(client=object(), season=2026, week=1, allow_non_linux=True)
@@ -138,7 +138,7 @@ def test_guard_runs_on_non_linux_with_explicit_override(monkeypatch):
     monkeypatch.setattr(ep, "load_stored_predictions", lambda client, season, week: stored)
     monkeypatch.setattr(
         ep, "generate_predictions",
-        lambda client, season, week, feature_list=None, blend_n=None: (reproduced, {"_model": None}),
+        lambda client, season, week, feature_list=None, blend_n=None, curated_dataset="curated": (reproduced, {"_model": None}),
     )
     passed, *_ = ep.run_reproduction_guard(client=object(), season=2026, week=1, allow_non_linux=True)
     assert passed is True
@@ -155,5 +155,6 @@ def test_environment_fingerprint_has_expected_keys():
         "platform_system", "platform_release", "platform_machine",
         "python_version", "pandas_version", "numpy_version",
         "scikit_learn_version", "xgboost_version",
+        "git_sha", "cloud_run_execution",
     }
     assert env["platform_system"] == ep.platform.system()

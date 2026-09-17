@@ -466,7 +466,7 @@ def build_feature_matrix(
     games: pd.DataFrame,
     config_features: list[dict],
     blend_n: int = 4,
-) -> tuple[pd.DataFrame, list[str]]:
+) -> tuple[pd.DataFrame, list[str], pd.DataFrame]:
     """
     Build the game-level feature matrix according to the config feature list.
 
@@ -481,6 +481,9 @@ def build_feature_matrix(
     -------
     game_features   : DataFrame ready for the walk-forward harness
     model_feat_cols : Ordered list of column names to pass as model_features
+    team_features   : long (team, season, week, <52 features>) table — pass to
+                      run_walk_forward(team_features=...) for explanation
+                      league_pctile (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §4)
     """
     # ── 1. Compute all curated team features ─────────────────────────────────
     logger.info("Computing curated team features (all 23 per-team, plus blend/prev) ...")
@@ -570,7 +573,7 @@ def build_feature_matrix(
             f"Expected model feature columns missing from game_features: {missing_cols}"
         )
 
-    return game_features, model_feat_cols
+    return game_features, model_feat_cols, team_features
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -617,6 +620,10 @@ def main() -> None:
     # Prior-season blend weight, in pseudo-games (PROMPT-PRIOR-SEASON-BLEND.md
     # §3a/§4). Only affects _blend features if the config selects any.
     blend_n = int(methodology.get("blend_n", 4))
+
+    # Store per-(game, feature) explanations for every test game of every fold
+    # (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §4). Default on.
+    store_explanations = bool(methodology.get("store_explanations", True))
 
     # Resolve model class
     model_type  = model_cfg.get("type", "xgboost")
@@ -686,7 +693,7 @@ def main() -> None:
                 )
 
         # ── 4. Build feature matrix ───────────────────────────────────────────
-        game_features, model_feat_cols = build_feature_matrix(
+        game_features, model_feat_cols, team_features = build_feature_matrix(
             client, plays, games, config["features"], blend_n=blend_n
         )
         logger.info(
@@ -745,6 +752,8 @@ def main() -> None:
             gate_hit_rate=gate_hit_rate,
             gate_min_games=gate_min_games,
             random_seed=random_seed,
+            team_features=team_features,
+            store_explanations=store_explanations,
         )
         gate_passed = result.gate_passed
 
@@ -790,6 +799,34 @@ def main() -> None:
             run_id=run_id,
             experiment_config_id=experiment_config_id,
         )
+
+        if store_explanations:
+            all_exp = result.all_explanations()
+            if not all_exp.empty:
+                from backtests.explanations import feature_list_hash
+                from backtests.explanations_bq import ensure_explanations_table, write_explanations
+
+                ensure_explanations_table(client)
+                write_explanations(
+                    client,
+                    all_exp,
+                    run_id=run_id,
+                    experiment_id=experiment_config_id or run_id,
+                    model_name=model_type,
+                    feature_list_hash=feature_list_hash(model_feat_cols),
+                    blend_n=blend_n,
+                    # clean_forward ("not regenerated after kickoff") doesn't apply
+                    # to a backtest — every test game is already decided history.
+                    # is_approximate/reproduction_max_diff are explain_picks.py's
+                    # reproduction-guard concepts, which a backtest never runs.
+                    clean_forward=None,
+                )
+            else:
+                logger.warning(
+                    "store_explanations was on but no fold produced explanations "
+                    "(model class may have no .explain()) — nothing written"
+                )
+
         logger.info("BigQuery writes complete")
 
         # ── 7. Write local artifacts (best-effort — failures do NOT crash the job) ──

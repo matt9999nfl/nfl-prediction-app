@@ -347,6 +347,15 @@ export interface FamilyMatchup {
  * (explain_picks.py --approximate) — the UI must label these, not present
  * them as the model that made the live pick. clean_forward means only "not
  * regenerated after this game kicked off" and is unrelated to is_approximate.
+ *
+ * The live pick is authoritative (2026-09-17): predicted_side is this
+ * explanation's own model lean, which can disagree with the pick the app
+ * actually made when the explanation is approximate. live_predicted_side is
+ * the pick actually served by GET /api/v1/predictions; side_matches_live_pick
+ * is false exactly when they disagree. The UI must always name
+ * live_predicted_side, never predicted_side, in headings — and
+ * pick_direction_contribution on every feature below is already re-signed
+ * relative to live_predicted_side, not predicted_side.
  */
 export interface GameExplanationResponse {
   game_id: string
@@ -354,6 +363,8 @@ export interface GameExplanationResponse {
   run_id: string
   model_name: string
   predicted_side: 'home' | 'away'
+  live_predicted_side: 'home' | 'away'
+  side_matches_live_pick: boolean
   predicted_home_cover_prob: number
   bias_logodds: number
   clean_forward: boolean | null

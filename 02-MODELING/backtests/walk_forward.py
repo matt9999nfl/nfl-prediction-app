@@ -34,6 +34,7 @@ from sklearn.metrics import log_loss
 from features.ol_metrics import ALL_MODEL_FEATURES
 from models.baselines import AlwaysHomeBaseline
 from models.ol_xgb import OLXGBModel  # default; callers may pass a different class
+from backtests.explanations import build_explanations
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,9 @@ class FoldResult:
     train_seasons: list[int]
     predictions:   pd.DataFrame       # per-game predictions (spec output contract)
     feature_importance: pd.DataFrame  # from this fold's model
+    # Per-(game, feature) TreeSHAP explanations for this fold's test games
+    # (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §4). None when store_explanations=False.
+    explanations: Optional[pd.DataFrame] = None
     wins:    int = 0
     losses:  int = 0
     pushes:  int = 0
@@ -148,6 +152,17 @@ class BacktestResult:
 
     def all_predictions(self) -> pd.DataFrame:
         return pd.concat([fr.predictions for fr in self.folds], ignore_index=True)
+
+    def all_explanations(self) -> pd.DataFrame:
+        """Concatenated per-(game, feature) explanations across every fold that has them.
+
+        Empty DataFrame if store_explanations was False (or every fold's
+        explanations build failed and was skipped — see run_walk_forward).
+        """
+        frames = [fr.explanations for fr in self.folds if fr.explanations is not None]
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
 
 
 # ── Core scoring logic ───────────────────────────────────────────────────────
@@ -232,6 +247,8 @@ def run_walk_forward(
     gate_hit_rate: float = PHASE2_GATE_HIT_RATE,
     gate_min_games: int = PHASE2_GATE_MIN_GAMES,
     random_seed: int = 42,
+    team_features: pd.DataFrame | None = None,
+    store_explanations: bool = True,
 ) -> BacktestResult:
     """
     Run the walk-forward backtest.
@@ -251,6 +268,18 @@ def run_walk_forward(
     gate_hit_rate   : Hit-rate threshold for gate_passed evaluation.
     gate_min_games  : Minimum evaluated games for gate_passed evaluation.
     random_seed     : Random seed passed to model constructor each fold. Default 42.
+    team_features   : optional long (team, season, week, <base features>) table,
+                      passed through to build_explanations() for league_pctile.
+                      Omit to still get explanations with league_pctile all-NaN.
+    store_explanations : per-(game, feature) TreeSHAP explanations for every test
+                      game of every fold (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §4).
+                      Default on. Interaction values are never computed here
+                      (explain_interactions() is a separate, unused-in-backtests
+                      call) — only the per-feature contributions. Retrieve via
+                      BacktestResult.all_explanations(); a model class without
+                      .explain() (a MODEL_REGISTRY stub) logs a warning and
+                      leaves that fold's explanations as None rather than
+                      failing the whole backtest.
 
     Returns
     -------
@@ -303,6 +332,29 @@ def run_walk_forward(
 
         wins, losses, pushes, hit_rate, ll = _compute_fold_metrics(pred_df, y_test, probs)
 
+        # ── Explanations (per test game, this fold) ───────────────────────
+        fold_explanations = None
+        if store_explanations:
+            try:
+                games_meta = test_df[["game_id", "season", "week", "home_team", "away_team"]]
+                predicted_prob_s = pd.Series(probs, index=test_df.index)
+                fold_explanations = build_explanations(
+                    model, X_test, games_meta, pred_df["predicted_side"], predicted_prob_s,
+                    team_features=team_features,
+                )
+                fold_explanations["fold"] = fold_num
+            except Exception as exc:
+                # Explanations are additive value on top of the backtest's core
+                # metrics (ATS record, log-loss, gate) — a family-map gap for a
+                # user-dataset feature, or a model class with no .explain(),
+                # must not take down the whole run. Metrics are unaffected;
+                # only this fold's explanations are skipped.
+                logger.warning(
+                    "  Explanations failed for fold %d (%s: %s) — skipping, "
+                    "metrics for this fold are unaffected",
+                    fold_num, type(exc).__name__, exc,
+                )
+
         # ── Baseline ───────────────────────────────────────────────────────
         b_record = baseline.ats_record(test_df)
 
@@ -317,6 +369,7 @@ def run_walk_forward(
             train_seasons=train_seasons,
             predictions=pred_df,
             feature_importance=fi,
+            explanations=fold_explanations,
             wins=wins,
             losses=losses,
             pushes=pushes,

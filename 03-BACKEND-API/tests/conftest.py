@@ -134,6 +134,7 @@ def make_explanation_row(**kwargs):
         "run_id": "run-001",
         "model_name": "ol_xgb_v2",
         "predicted_side": "home",
+        "live_predicted_side": "home",
         "predicted_home_cover_prob": 0.55,
         "bias_logodds": -0.05,
         "clean_forward": True,

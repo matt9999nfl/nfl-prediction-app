@@ -27,14 +27,20 @@ def feature_list_hash(feature_list: list[str]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-def _percentile_table(team_features: pd.DataFrame, base_features: list[str]) -> pd.DataFrame:
+def _percentile_table(team_features: pd.DataFrame, team_feature_cols: list[str]) -> pd.DataFrame:
     """
-    team, season, week + one `<feat>_pctile` column per base feature: this
-    team's percentile rank of that feature's raw value among all teams with a
-    row for the same (season, week).
+    team, season, week + one `<col>_pctile` column per team_features column:
+    this team's percentile rank of that column's raw value among all teams
+    with a row for the same (season, week).
+
+    team_feature_cols must be team_features' own column names (e.g.
+    "qb_cpoe_blend"), not the family-stripped base name ("qb_cpoe") — a
+    `_blend`/`_prev` feature's percentile column would otherwise never match
+    a real column and silently come back all-NaN (2026-09-17, league_pctile
+    null for *_qb_cpoe_blend / *_qb_epa_under_pressure_blend).
     """
     out = team_features[["team", "season", "week"]].copy()
-    for f in base_features:
+    for f in team_feature_cols:
         if f in team_features.columns:
             out[f"{f}_pctile"] = (
                 team_features.groupby(["season", "week"])[f].rank(pct=True) * 100.0
@@ -96,15 +102,22 @@ def build_explanations(
     )
 
     # League percentile: only meaningful for home/away (team-level) features.
+    # Joined on the actual team_features column name (home_/away_ prefix
+    # stripped only — NOT the family-stripped base_feature, which loses the
+    # _blend/_prev suffix that the real column still has).
+    exp["team_feature_col"] = np.where(
+        exp["side"].isin(["home", "away"]), exp["feature"].str[5:], None,
+    )
+
     if team_features is not None:
-        base_features = sorted(
-            exp.loc[exp["side"] != "game", "base_feature"].unique().tolist()
+        team_feature_cols = sorted(
+            exp.loc[exp["side"] != "game", "team_feature_col"].unique().tolist()
         )
-        pct_table = _percentile_table(team_features, base_features)
+        pct_table = _percentile_table(team_features, team_feature_cols)
         pct_long = pct_table.melt(
             id_vars=["team", "season", "week"], var_name="feat_pctile", value_name="pctile_value"
         )
-        pct_long["base_feature"] = pct_long["feat_pctile"].str.replace(r"_pctile$", "", regex=True)
+        pct_long["team_feature_col"] = pct_long["feat_pctile"].str.replace(r"_pctile$", "", regex=True)
         pct_long = pct_long.drop(columns=["feat_pctile"])
 
         exp["team_for_pctile"] = np.select(
@@ -114,7 +127,7 @@ def build_explanations(
         )
         merged = exp.merge(
             pct_long.rename(columns={"team": "team_for_pctile"}),
-            on=["team_for_pctile", "season", "week", "base_feature"],
+            on=["team_for_pctile", "season", "week", "team_feature_col"],
             how="left",
         )
         exp = exp.assign(league_pctile=merged["pctile_value"].to_numpy())
@@ -122,7 +135,7 @@ def build_explanations(
     else:
         exp["league_pctile"] = np.nan
 
-    exp = exp.drop(columns=["base_feature"]).rename(columns={"row": "row_id"})
+    exp = exp.drop(columns=["base_feature", "team_feature_col"]).rename(columns={"row": "row_id"})
     return exp
 
 

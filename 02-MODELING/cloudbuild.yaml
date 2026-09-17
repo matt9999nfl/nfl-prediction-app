@@ -2,6 +2,8 @@ steps:
 - name: gcr.io/cloud-builders/docker
   args:
   - build
+  - --build-arg
+  - GIT_SHA=$_GIT_SHA
   - -t
   - gcr.io/nfl-model-471509/nfl-experiment-runner:latest
   - -f
@@ -9,3 +11,9 @@ steps:
   - .
 images:
 - gcr.io/nfl-model-471509/nfl-experiment-runner:latest
+substitutions:
+  # Pass the commit this build is from: gcloud builds submit --config
+  # cloudbuild.yaml --substitutions=_GIT_SHA=<sha> . (PROMPT-STAGE1-FINISH-
+  # EXPLANATIONS.md §5/§6 — build from a clean export of the pushed commit,
+  # not the working tree, so this should be that commit's SHA).
+  _GIT_SHA: unknown

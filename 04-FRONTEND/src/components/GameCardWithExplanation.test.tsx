@@ -68,6 +68,8 @@ function explanation(overrides: Partial<GameExplanationResponse> = {}): GameExpl
     run_id: 'run',
     model_name: 'ol_xgb_v2',
     predicted_side: 'home',
+    live_predicted_side: 'home',
+    side_matches_live_pick: true,
     predicted_home_cover_prob: 0.55,
     bias_logodds: -0.1,
     clean_forward: true,

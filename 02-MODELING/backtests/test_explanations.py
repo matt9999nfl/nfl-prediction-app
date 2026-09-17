@@ -112,6 +112,59 @@ def test_league_pctile_ranks_teams_within_the_same_week():
     assert exp.loc[exp["feature"] == "temp", "league_pctile"].isna().all()
 
 
+def test_league_pctile_present_for_blend_features():
+    """
+    2026-09-17: league_pctile came back null for *_qb_cpoe_blend and
+    *_qb_epa_under_pressure_blend. Cause: the percentile join used the
+    family-stripped base name ("qb_cpoe"), which doesn't match team_features'
+    actual "_blend"-suffixed column. Regression guard for that fix.
+    """
+    blend_features = [
+        "home_qb_cpoe_blend", "away_qb_cpoe_blend",
+        "home_qb_epa_under_pressure_blend", "away_qb_epa_under_pressure_blend",
+    ]
+    rng = np.random.default_rng(1)
+    n_games = 6
+    X = pd.DataFrame(rng.normal(size=(n_games, len(blend_features))), columns=blend_features)
+    logit = X["home_qb_cpoe_blend"] - X["away_qb_cpoe_blend"]
+    y = (logit > 0).astype(int)
+
+    model = OLXGBModel(random_seed=42)
+    model.fit(X, y)
+    probs = model.predict_proba(X)
+
+    games_meta = pd.DataFrame({
+        "game_id": [f"2026_02_G{i}" for i in range(n_games)],
+        "season": 2026,
+        "week": 2,
+        "home_team": [f"H{i}" for i in range(n_games)],
+        "away_team": [f"A{i}" for i in range(n_games)],
+    })
+    predicted_side = pd.Series(np.where(probs > 0.5, "home", "away"), index=X.index)
+    predicted_prob = pd.Series(probs, index=X.index)
+
+    team_rows = []
+    for i, row in X.iterrows():
+        team_rows.append({
+            "team": games_meta.loc[i, "home_team"], "season": 2026, "week": 2,
+            "qb_cpoe_blend": row["home_qb_cpoe_blend"],
+            "qb_epa_under_pressure_blend": row["home_qb_epa_under_pressure_blend"],
+        })
+        team_rows.append({
+            "team": games_meta.loc[i, "away_team"], "season": 2026, "week": 2,
+            "qb_cpoe_blend": row["away_qb_cpoe_blend"],
+            "qb_epa_under_pressure_blend": row["away_qb_epa_under_pressure_blend"],
+        })
+    team_features = pd.DataFrame(team_rows)
+
+    exp = build_explanations(
+        model, X, games_meta, predicted_side, predicted_prob, team_features=team_features,
+    )
+    blend_rows = exp[exp["feature"].isin(blend_features)]
+    assert blend_rows["league_pctile"].notna().all()
+    assert (blend_rows["league_pctile"] >= 0).all() and (blend_rows["league_pctile"] <= 100).all()
+
+
 def test_matchup_view_nets_home_and_away_by_family():
     model, X, games_meta, side, prob = _toy_model_and_games()
     exp = build_explanations(model, X, games_meta, side, prob)

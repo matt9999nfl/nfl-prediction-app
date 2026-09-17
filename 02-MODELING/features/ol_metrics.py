@@ -91,9 +91,15 @@ ALL_MODEL_FEATURES = HOME_FEATURES + AWAY_FEATURES + GAME_CONTEXT_FEATURES
 
 # ── Data loading ────────────────────────────────────────────────────────────
 
-def load_plays(client: bigquery.Client) -> pd.DataFrame:
-    """Load curated.plays (all seasons).  Returns ~500 k rows."""
-    q = """
+def load_plays(client: bigquery.Client, dataset: str = "curated") -> pd.DataFrame:
+    """Load <dataset>.plays (all seasons).  Returns ~500 k rows.
+
+    dataset defaults to "curated". Pass "scratch_timetravel" (or another
+    dataset laid out the same way: games/plays tables with the same columns)
+    to reproduce predictions against data as it stood at a prior point in
+    time — see explain_picks.py --curated-dataset.
+    """
+    q = f"""
     SELECT
         game_id,
         season,
@@ -107,18 +113,24 @@ def load_plays(client: bigquery.Client) -> pd.DataFrame:
         epa,
         yards_gained,
         cpoe
-    FROM `nfl-model-471509.curated.plays`
+    FROM `nfl-model-471509.{dataset}.plays`
     ORDER BY season, week, game_id
     """
-    logger.info("Loading curated.plays …")
+    logger.info(f"Loading {dataset}.plays …")
     df = client.query(q).to_dataframe()
     logger.info(f"  {len(df):,} plays loaded")
     return df
 
 
-def load_games(client: bigquery.Client) -> pd.DataFrame:
-    """Load curated.games (all REG season games)."""
-    q = """
+def load_games(client: bigquery.Client, dataset: str = "curated") -> pd.DataFrame:
+    """Load <dataset>.games (all REG season games).
+
+    dataset defaults to "curated". Pass "scratch_timetravel" (or another
+    dataset laid out the same way: games/plays tables with the same columns)
+    to reproduce predictions against data as it stood at a prior point in
+    time — see explain_picks.py --curated-dataset.
+    """
+    q = f"""
     SELECT
         game_id,
         season,
@@ -135,10 +147,10 @@ def load_games(client: bigquery.Client) -> pd.DataFrame:
         div_game,
         temp,
         wind
-    FROM `nfl-model-471509.curated.games`
+    FROM `nfl-model-471509.{dataset}.games`
     ORDER BY season, week, game_id
     """
-    logger.info("Loading curated.games …")
+    logger.info(f"Loading {dataset}.games …")
     df = client.query(q).to_dataframe()
     logger.info(f"  {len(df):,} games loaded")
     return df

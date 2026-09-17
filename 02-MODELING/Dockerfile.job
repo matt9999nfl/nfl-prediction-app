@@ -10,5 +10,15 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # Copy source code
 COPY . .
 
-# Entry point: run_experiment.py reads EXPERIMENT_CONFIG_ID and NFL_RUN_ID from env
+# Git commit this image was built from (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §5)
+# — pass at build time with --build-arg GIT_SHA=<sha> (cloudbuild.yaml's
+# _GIT_SHA substitution), baked in as an env var so every run this image
+# produces (predict_upcoming.py, run_production_refresh.py, run_experiment.py,
+# explain_picks.py) can record exactly what code made it.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
+# Entry point: run_experiment.py reads EXPERIMENT_CONFIG_ID and NFL_RUN_ID from env.
+# nfl-production-refresh overrides this to run_production_refresh.py instead —
+# same image, both Cloud Run jobs (PROMPT-STAGE1-FINISH-EXPLANATIONS.md §6).
 CMD ["python", "backtests/run_experiment.py"]

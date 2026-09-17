@@ -37,6 +37,8 @@ function explanation(overrides: Partial<GameExplanationResponse> = {}): GameExpl
     run_id: 'run',
     model_name: 'ol_xgb_v2',
     predicted_side: 'away',
+    live_predicted_side: 'away',
+    side_matches_live_pick: true,
     predicted_home_cover_prob: 0.4,
     bias_logodds: -0.1,
     clean_forward: true,
@@ -66,10 +68,36 @@ describe('WhyThisPick', () => {
     mockUseGameExplanation.mockReturnValue({ data: explanation(), isLoading: false, isError: false })
     const text = textOf()
     expect(text).toContain('Why this pick')
-    expect(text).toContain('SF') // predicted_side is 'away', away team is SF
+    expect(text).toContain('SF') // live_predicted_side is 'away', away team is SF
     expect(text).toContain('OL pass protection')
+    expect(text).toContain('home_ol_sack_rate_blend') // stat name next to the family label
     expect(text).toContain('0.045')
     expect(text).toContain('63th pctile')
+  })
+
+  it('names the live pick in the heading, not this run\'s own lean, when they agree', () => {
+    mockUseGameExplanation.mockReturnValue({
+      data: explanation({ predicted_side: 'away', live_predicted_side: 'away', side_matches_live_pick: true }),
+      isLoading: false, isError: false,
+    })
+    const text = textOf()
+    expect(text).toContain('Why this pick — SF')
+    expect(text).not.toContain('leans toward')
+  })
+
+  it('names the live pick and warns when the approximate model leans the other way', () => {
+    // Mirrors the shipped defect: 2026_01_ATL_PIT read "Why this pick — ATL"
+    // while the live pick was PIT. The heading must always name the live
+    // pick, and a warning must explain the mismatch.
+    mockUseGameExplanation.mockReturnValue({
+      data: explanation({ predicted_side: 'away', live_predicted_side: 'home', side_matches_live_pick: false }),
+      isLoading: false, isError: false,
+    })
+    const text = textOf()
+    expect(text).toContain('Why this pick — LA') // live_predicted_side is 'home', home team is LA
+    expect(text).not.toContain('Why this pick — SF')
+    expect(text).toContain('The approximate model leans toward SF')
+    expect(text).toContain('explain this pick')
   })
 
   it('marks an imputed driver', () => {
