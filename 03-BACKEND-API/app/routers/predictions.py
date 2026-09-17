@@ -18,6 +18,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, sta
 from google.cloud import bigquery
 
 from app.dependencies import get_bq_client, get_request_id, require_api_key
+from app.queries import explanations as eq
 from app.queries import predictions as pq
 from app.schemas.common import ErrorResponse
 from app.schemas.experiments import (
@@ -25,6 +26,7 @@ from app.schemas.experiments import (
     ProductionPredictionItem,
     ProductionPredictionsResponse,
 )
+from app.schemas.explanations import ExplanationFeature, FamilyMatchup, GameExplanationResponse
 
 logger = logging.getLogger(__name__)
 
@@ -188,4 +190,116 @@ def refresh_predictions(
             f"Generating predictions for {target}. This takes about two minutes; "
             "the picks appear on the dashboard when it finishes."
         ),
+    )
+
+
+# ── GET /api/v1/predictions/{game_id}/explanation ────────────────────────────
+
+
+def _build_family_matchup(rows: list[dict]) -> list[FamilyMatchup]:
+    """
+    Per family: home contribution, away contribution, net (their sum — both
+    are already signed toward P(home cover), so the sum is the family's total
+    pull on that same target). Game-level features (side='game') have no
+    home/away split and are excluded here — they're still in all_features.
+    """
+    by_family: dict[str, dict[str, float]] = {}
+    for r in rows:
+        if r["side"] not in ("home", "away"):
+            continue
+        entry = by_family.setdefault(r["family"], {"home": 0.0, "away": 0.0})
+        entry[r["side"]] += r["contribution_logodds"]
+    return [
+        FamilyMatchup(
+            family=family,
+            home_contribution=v["home"],
+            away_contribution=v["away"],
+            net=v["home"] + v["away"],
+        )
+        for family, v in sorted(by_family.items())
+    ]
+
+
+@router.get(
+    "/{game_id}/explanation",
+    response_model=GameExplanationResponse,
+    responses={
+        404: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+    },
+    summary="Per-game 'why this pick' explanation",
+    description=(
+        "Top drivers, the family matchup view, and the full feature list behind "
+        "one game's prediction. Backed by experiments.prediction_explanations "
+        "(TreeSHAP contributions). No auth — same as GET /api/v1/predictions."
+    ),
+)
+def get_game_explanation(
+    game_id: str,
+    request: Request,
+    request_id: Annotated[str, Depends(get_request_id)],
+    bq: Annotated[bigquery.Client, Depends(get_bq_client)],
+) -> GameExplanationResponse:
+    try:
+        prod_exp = pq.get_production_experiment(bq)
+    except Exception as exc:
+        logger.error(
+            "[%s] BigQuery error resolving production experiment for explanation %s: %s",
+            request_id, game_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
+        )
+
+    if prod_exp is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "No production experiment available",
+                "code": "no_production_experiment",
+                "request_id": request_id,
+            },
+        )
+
+    try:
+        rows = eq.get_game_explanation_rows(bq, prod_exp["experiment_id"], game_id)
+    except Exception as exc:
+        logger.error(
+            "[%s] BigQuery error fetching explanation for %s: %s",
+            request_id, game_id, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Upstream query failed", "code": "upstream_error", "request_id": request_id},
+        )
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": f"No explanation stored for game '{game_id}'",
+                "code": "not_found",
+                "request_id": request_id,
+            },
+        )
+
+    features = [ExplanationFeature.model_validate(r) for r in rows]
+    top_drivers = sorted(features, key=lambda f: f.abs_rank)[:5]
+    head = rows[0]
+
+    return GameExplanationResponse(
+        game_id=game_id,
+        experiment_id=prod_exp["experiment_id"],
+        run_id=head["run_id"],
+        model_name=head["model_name"],
+        predicted_side=head["predicted_side"],
+        predicted_home_cover_prob=head["predicted_home_cover_prob"],
+        bias_logodds=head["bias_logodds"],
+        clean_forward=head["clean_forward"],
+        is_approximate=bool(head["is_approximate"]),
+        reproduction_max_diff=head["reproduction_max_diff"],
+        top_drivers=top_drivers,
+        family_matchup=_build_family_matchup(rows),
+        all_features=features,
     )

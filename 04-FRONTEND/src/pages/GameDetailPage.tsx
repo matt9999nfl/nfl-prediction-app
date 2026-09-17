@@ -10,6 +10,7 @@ import { useGame } from '@/api/queries'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { StatusBadge } from '@/components/StatusBadge'
+import { WhyThisPick } from '@/components/WhyThisPick'
 import {
   Card,
   CardContent,
@@ -148,6 +149,9 @@ export function GameDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Why this pick (Stage 1) — renders nothing if no explanation is stored yet */}
+      <WhyThisPick gameId={game.game_id} homeTeam={game.home_team} awayTeam={game.away_team} />
 
       {/* Team stats */}
       {home && away && (

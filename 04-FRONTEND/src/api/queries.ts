@@ -34,6 +34,7 @@ import type {
   Prediction,
   ProductionPredictionsResponse,
   PredictionRefreshResponse,
+  GameExplanationResponse,
   CreateExperimentPayload,
   Framework,
   CreateFrameworkPayload,
@@ -129,6 +130,24 @@ export function useRefreshPredictions() {
         void queryClient.invalidateQueries({ queryKey: ['predictions'] })
       }, 120_000)
     },
+  })
+}
+
+/**
+ * Per-game "Why this pick" explanation (Stage 1).
+ *
+ * 404 with code `not_found` is a normal state — older picks may not have a
+ * stored explanation yet (explain_picks.py backfills them) — so this does not
+ * retry either, same reasoning as useProductionPredictions.
+ */
+export function useGameExplanation(gameId: string) {
+  return useQuery<GameExplanationResponse>({
+    queryKey: ['predictions', gameId, 'explanation'],
+    queryFn: () =>
+      api.get<GameExplanationResponse>(`/api/v1/predictions/${gameId}/explanation`),
+    enabled: Boolean(gameId),
+    staleTime: 300_000,
+    retry: false,
   })
 }
 

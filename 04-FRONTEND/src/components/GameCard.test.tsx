@@ -9,10 +9,14 @@ import type { Game, Prediction } from '@/api/types'
 // was correct, the card just called the wrong function. So this checks what
 // the card actually prints.
 
-function textOf(game: Game, prediction?: Prediction): string {
+function textOf(
+  game: Game,
+  prediction?: Prediction,
+  mainDriver?: { family: string; side: 'home' | 'away' | 'game' } | null,
+): string {
   const html = renderToStaticMarkup(
     <StaticRouter location="/">
-      <GameCard game={game} prediction={prediction} />
+      <GameCard game={game} prediction={prediction} mainDriver={mainDriver} />
     </StaticRouter>,
   )
   return html
@@ -112,5 +116,35 @@ describe('GameCard model pick', () => {
 
   it('renders no pick section without a prediction', () => {
     expect(textOf(WAS_AT_PHI)).not.toContain('Model pick')
+  })
+})
+
+describe('GameCard main driver chip', () => {
+  const WAS_AT_PHI = game({
+    game_id: '2026_01_WAS_PHI',
+    week: 1,
+    home_team: 'PHI',
+    away_team: 'WAS',
+    home_spread_close: 6,
+  })
+  const pick = prediction({ predicted_side: 'away', predicted_home_cover_prob: 0.33 })
+
+  it('shows the family and team for a home/away driver', () => {
+    const text = textOf(WAS_AT_PHI, pick, { family: 'OL pass protection', side: 'home' })
+    expect(text).toContain('OL pass protection')
+    expect(text).toContain('PHI')
+  })
+
+  it('shows the family alone for a game-level driver (no team suffix)', () => {
+    const text = textOf(WAS_AT_PHI, pick, { family: 'weather', side: 'game' })
+    expect(text).toContain('weather')
+  })
+
+  it('renders no chip when mainDriver is absent', () => {
+    expect(textOf(WAS_AT_PHI, pick, null)).not.toContain('OL pass protection')
+  })
+
+  it('renders no chip without a prediction, even if mainDriver were somehow passed', () => {
+    expect(textOf(WAS_AT_PHI, undefined, { family: 'QB', side: 'away' })).not.toContain('QB')
   })
 })

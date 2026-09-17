@@ -7,12 +7,23 @@ import type { Game, Prediction } from '@/api/types'
 import { pickedSideProb, pickedTeam } from '@/lib/predictions'
 import { cn } from '@/lib/utils'
 
+interface MainDriver {
+  family: string
+  side: 'home' | 'away' | 'game'
+}
+
 interface GameCardProps {
   game: Game
   prediction?: Prediction
+  /**
+   * Compact chip naming the top-contributing family behind the pick (Stage 1
+   * "Why this pick"). Purely presentational — the caller (GameCardWithExplanation)
+   * owns the fetch, so this component and its tests stay fetch-free.
+   */
+  mainDriver?: MainDriver | null
 }
 
-export function GameCard({ game, prediction }: GameCardProps) {
+export function GameCard({ game, prediction, mainDriver }: GameCardProps) {
   const isScheduled = game.status === 'scheduled'
 
   return (
@@ -84,7 +95,14 @@ export function GameCard({ game, prediction }: GameCardProps) {
                   )
                 </span>
               </div>
-              <div className="flex justify-end">
+              <div className="flex items-center justify-end gap-1.5">
+                {mainDriver && (
+                  <Badge variant="outline" className="text-xs py-0">
+                    {mainDriver.family}
+                    {mainDriver.side !== 'game' &&
+                      ` · ${mainDriver.side === 'home' ? game.home_team : game.away_team}`}
+                  </Badge>
+                )}
                 <ConfidenceBadge tier={prediction.confidence_tier} />
               </div>
             </div>

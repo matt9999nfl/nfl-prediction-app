@@ -128,6 +128,31 @@ def make_prediction_row(**kwargs):
     return defaults
 
 
+def make_explanation_row(**kwargs):
+    """Return a dict matching one row read from experiments.prediction_explanations."""
+    defaults = {
+        "run_id": "run-001",
+        "model_name": "ol_xgb_v2",
+        "predicted_side": "home",
+        "predicted_home_cover_prob": 0.55,
+        "bias_logodds": -0.05,
+        "clean_forward": True,
+        "is_approximate": False,
+        "reproduction_max_diff": None,
+        "feature": "home_ol_sack_rate_blend",
+        "side": "home",
+        "family": "OL pass protection",
+        "raw_value": 0.045,
+        "league_pctile": 62.5,
+        "was_imputed": False,
+        "contribution_logodds": 0.12,
+        "pick_direction_contribution": 0.12,
+        "abs_rank": 1,
+    }
+    defaults.update(kwargs)
+    return defaults
+
+
 def make_fold_result_row(**kwargs):
     """Return a dict matching the FoldResult schema with sensible defaults."""
     defaults = {

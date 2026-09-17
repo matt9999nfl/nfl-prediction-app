@@ -318,6 +318,52 @@ export type CreateExperimentPayload = Omit<
   'experiment_id' | 'created_at' | 'status' | 'gate_passed'
 >
 
+// ── Explanations (Stage 1: per-game "Why this pick") ─────────────────────────
+
+export interface ExplanationFeature {
+  feature: string
+  side: 'home' | 'away' | 'game'
+  family: string
+  raw_value: number | null
+  league_pctile: number | null
+  was_imputed: boolean
+  contribution_logodds: number
+  pick_direction_contribution: number
+  abs_rank: number
+}
+
+export interface FamilyMatchup {
+  family: string
+  home_contribution: number
+  away_contribution: number
+  net: number
+}
+
+/**
+ * GET /api/v1/predictions/{game_id}/explanation
+ *
+ * is_approximate / reproduction_max_diff are non-null only for picks
+ * backfilled onto a stored prediction that could not be reproduced exactly
+ * (explain_picks.py --approximate) — the UI must label these, not present
+ * them as the model that made the live pick. clean_forward means only "not
+ * regenerated after this game kicked off" and is unrelated to is_approximate.
+ */
+export interface GameExplanationResponse {
+  game_id: string
+  experiment_id: string
+  run_id: string
+  model_name: string
+  predicted_side: 'home' | 'away'
+  predicted_home_cover_prob: number
+  bias_logodds: number
+  clean_forward: boolean | null
+  is_approximate: boolean
+  reproduction_max_diff: number | null
+  top_drivers: ExplanationFeature[]
+  family_matchup: FamilyMatchup[]
+  all_features: ExplanationFeature[]
+}
+
 // ── Frameworks ────────────────────────────────────────────────────────────────
 
 export interface Framework {

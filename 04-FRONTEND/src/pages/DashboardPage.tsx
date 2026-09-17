@@ -13,7 +13,7 @@ import {
   useProductionPredictions,
   useRefreshPredictions,
 } from '@/api/queries'
-import { GameCard } from '@/components/GameCard'
+import { GameCardWithExplanation } from '@/components/GameCardWithExplanation'
 import { LowDataWarning } from '@/components/LowDataWarning'
 import { LoadingCards } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
@@ -185,7 +185,7 @@ export function DashboardPage() {
           <h2 className="text-base font-semibold mb-3">Week {week}</h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {weekGames.map((game) => (
-              <GameCard
+              <GameCardWithExplanation
                 key={game.game_id}
                 game={game}
                 prediction={predictionsByGameId.get(game.game_id)}
