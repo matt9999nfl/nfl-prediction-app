@@ -297,6 +297,14 @@ def generate_predictions(
     model.fit(train_df[model_feat_cols], train_df["home_covered"].astype(int))
     probs = model.predict_proba(test_df[model_feat_cols])
 
+    # Captured BEFORE the reset_index/sort below so these stay index-aligned
+    # with test_df — explanations (STAGE 1) key off that shared index to
+    # avoid a second, error-prone realignment by game_id.
+    predicted_side_by_row = pd.Series(np.where(probs > 0.5, "home", "away"), index=test_df.index)
+    predicted_prob_by_row = pd.Series(probs, index=test_df.index)
+    test_X_raw = test_df[model_feat_cols]
+    games_meta = test_df[["game_id", "season", "week", "home_team", "away_team"]]
+
     preds = test_df[
         ["game_id", "season", "week", "home_team", "away_team", "home_spread_close"]
     ].copy().reset_index(drop=True)
@@ -318,6 +326,16 @@ def generate_predictions(
         "feature_null_rate": float(feat_null_rate),
         "features": model_feat_cols,
         "feature_importance": model.feature_importance().to_dict(orient="records")[:25],
+        "blend_n": blend_n,
+        # Private keys for STAGE 1 explanations (backtests/explanations.py).
+        # Not written to BigQuery directly and not part of this function's
+        # documented contract — existing callers ignore them.
+        "_model": model,
+        "_test_X_raw": test_X_raw,
+        "_games_meta": games_meta,
+        "_predicted_side": predicted_side_by_row,
+        "_predicted_home_cover_prob": predicted_prob_by_row,
+        "_team_features": team_features,
     }
     return preds, meta
 
@@ -622,6 +640,101 @@ def grade_completed(client: bigquery.Client, season: int, week: int) -> None:
     logger.info("Graded %s rows for %d week %d", job.num_dml_affected_rows, season, week)
 
 
+# ── STAGE 1 explanations ─────────────────────────────────────────────────────
+
+
+def write_week_explanations(
+    client: bigquery.Client,
+    meta: dict,
+    preds: pd.DataFrame,
+    run_id: str,
+    model_name: str = "ol_xgb_v2",
+) -> int:
+    """
+    Compute and store per-game explanations for the week generate_predictions()
+    just produced (PROMPT-PICK-EXPLANATIONS-AND-EDGE-LAB.md STAGE 1.2/1.3).
+
+    Delete-then-insert, exactly like replace_week_predictions — except games
+    that already carry a recorded result (home_covered was NOT NULL before
+    this run, i.e. "already played" in generate_predictions' own terms) are
+    left untouched entirely: their old explanation rows are neither deleted
+    nor replaced. This is a proxy for "kicked off" (a game mid-play with no
+    final score yet is not caught by it) — the real fix is the separately
+    tracked "lock predictions at kickoff" platform gap. Until that lands, the
+    standing procedural rule is what actually protects this: "generate
+    predictions" is not pressed between a week's first kickoff and the end of
+    that week's games.
+
+    Imports the explanations modules lazily so a module-level import here
+    cannot affect anything that imports predict_upcoming without BigQuery
+    credentials (see test_predict_upcoming.py's stubbing).
+    """
+    from backtests.explanations import build_explanations, feature_list_hash
+    from backtests.explanations_bq import (
+        ensure_explanations_table,
+        write_explanations,
+        delete_kicked_off_games,
+    )
+
+    model = meta.get("_model")
+    X_raw = meta.get("_test_X_raw")
+    games_meta = meta.get("_games_meta")
+    predicted_side = meta.get("_predicted_side")
+    predicted_prob = meta.get("_predicted_home_cover_prob")
+    if model is None or X_raw is None or games_meta is None:
+        raise RuntimeError(
+            "write_week_explanations requires the private _model/_test_X_raw/"
+            "_games_meta keys generate_predictions() stashes in meta."
+        )
+    team_features = meta.get("_team_features")
+
+    already_played_game_ids = preds.loc[
+        preds["actual_home_covered"].notna(), "game_id"
+    ].tolist()
+    not_kicked_off_mask = ~games_meta["game_id"].isin(already_played_game_ids)
+    not_kicked_off = X_raw.index[not_kicked_off_mask]
+
+    season = int(games_meta["season"].iloc[0])
+    week = int(games_meta["week"].iloc[0])
+
+    ensure_explanations_table(client)
+
+    if len(not_kicked_off) == 0:
+        logger.info(
+            "write_week_explanations: every game in %d week %d has already "
+            "kicked off — leaving existing explanations untouched",
+            season, week,
+        )
+        return 0
+
+    exp = build_explanations(
+        model,
+        X_raw.loc[not_kicked_off],
+        games_meta.loc[not_kicked_off],
+        predicted_side.loc[not_kicked_off],
+        predicted_prob.loc[not_kicked_off],
+        team_features=team_features,
+    )
+
+    delete_kicked_off_games(client, PRODUCTION_EXPERIMENT_ID, season, week, already_played_game_ids)
+    n = write_explanations(
+        client,
+        exp,
+        run_id=run_id,
+        experiment_id=PRODUCTION_EXPERIMENT_ID,
+        model_name=model_name,
+        feature_list_hash=feature_list_hash(meta["features"]),
+        blend_n=meta.get("blend_n"),
+        clean_forward=None,
+    )
+    logger.info(
+        "write_week_explanations: wrote explanations for %d/%d games in %d week %d "
+        "(%d already kicked off, skipped)",
+        len(not_kicked_off), len(games_meta), season, week, len(already_played_game_ids),
+    )
+    return n
+
+
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
 
@@ -686,6 +799,28 @@ def preflight(client: bigquery.Client) -> None:
          "actual_home_covered", "correct", "ol_mismatch_flag"},
         "backtest_predictions",
     )
+
+    # prediction_explanations is created idempotently by write_week_explanations
+    # itself (ensure_explanations_table), so a missing table is not a preflight
+    # failure the way the other three are — but check it if it already exists,
+    # for the same "fail fast on a stale schema" reason.
+    try:
+        from backtests.explanations_bq import EXPLANATIONS_TABLE, EXPLANATIONS_SCHEMA
+        try:
+            client.get_table(EXPLANATIONS_TABLE)
+        except Exception:
+            pass  # table doesn't exist yet — ensure_explanations_table() will create it
+        else:
+            # write_explanations() always sets every column (explicit NULL/NA
+            # where the value doesn't apply), so "required" here is every
+            # column the schema declares.
+            _check(
+                EXPLANATIONS_TABLE,
+                {f.name for f in EXPLANATIONS_SCHEMA},
+                "prediction_explanations",
+            )
+    except ImportError:
+        pass
 
     if problems:
         for p in problems:
@@ -758,7 +893,9 @@ def main() -> int:
     # has finished, so it is always safe to call.
     grade_completed(client, args.season, args.week)
 
+    n_explained = write_week_explanations(client, meta, preds, run_id)
     print(f"  Written. experiment_id={PRODUCTION_EXPERIMENT_ID} run_id={run_id}")
+    print(f"  Explanations written for {n_explained} game(s).")
     return 0
 
 

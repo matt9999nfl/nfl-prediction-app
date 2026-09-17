@@ -52,6 +52,7 @@ from backtests.predict_upcoming import (  # noqa: E402
     replace_week_predictions,
     upsert_production_config,
     write_run_row,
+    write_week_explanations,
 )
 
 logging.basicConfig(
@@ -176,6 +177,15 @@ def main() -> int:
             # curated.games here closes that window; it is a no-op when nothing
             # in the target week has been played.
             grade_completed(client, season, week)
+
+            try:
+                n_explained = write_week_explanations(client, meta, preds, run_id)
+                logger.info("Wrote explanations for %d game(s)", n_explained)
+            except Exception as exc:
+                # Explanations are additive — a failure here must not roll back
+                # or block the predictions that were already written above.
+                logger.error("Explanations FAILED (predictions were still written): %s", exc, exc_info=True)
+                failures.append(f"explanations: {exc}")
 
             logger.info(
                 "Wrote %s predictions for %s week %s (run_id=%s)",

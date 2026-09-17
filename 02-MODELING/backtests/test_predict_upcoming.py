@@ -46,7 +46,26 @@ BACKEND = REPO / "03-BACKEND-API"
 
 
 def _stub_dependencies():
-    """Stub bigquery and the feature/model modules so import needs no creds."""
+    """
+    Stub bigquery and the feature/model modules so import needs no creds.
+
+    Returns a snapshot of every sys.modules entry this touches (module name ->
+    prior object, or _MISSING if it wasn't present) so the caller can restore
+    the real global state afterward. Without this, the stub "features" /
+    "models" / "backtests" package objects (no __path__, so not real
+    packages) stick around in sys.modules for the rest of the pytest process
+    and break any later test file's real `import features.<submodule>` with
+    "'features' is not a package" — observed when this file collects before
+    features/test_prior_season_blend.py or features/test_families.py.
+    """
+    touched = (
+        "google", "google.cloud", "google.cloud.bigquery",
+        "features", "features.ol_metrics", "features.comprehensive", "features.situational",
+        "models", "models.xgb_v2",
+        "backtests", "backtests.bq_writer",
+    )
+    snapshot = {name: sys.modules.get(name, _MISSING) for name in touched}
+
     google = sys.modules.get("google") or types.ModuleType("google")
     cloud = types.ModuleType("google.cloud")
     bq = types.ModuleType("google.cloud.bigquery")
@@ -93,11 +112,28 @@ def _stub_dependencies():
         mod.__dict__.update(attrs)
         sys.modules[name] = mod
 
+    return snapshot
 
-_stub_dependencies()
-_spec = importlib.util.spec_from_file_location("pu", HERE / "predict_upcoming.py")
-pu = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(pu)
+
+def _restore_sys_modules(snapshot: dict) -> None:
+    for name, prior in snapshot.items():
+        if prior is _MISSING:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = prior
+
+
+_MISSING = object()
+_snapshot = _stub_dependencies()
+try:
+    _spec = importlib.util.spec_from_file_location("pu", HERE / "predict_upcoming.py")
+    pu = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(pu)
+finally:
+    # pu's own namespace already holds everything it imported from the stubs
+    # (Python bound those names at exec time); the sys.modules entries were
+    # only needed to make the import machinery happy during that one exec.
+    _restore_sys_modules(_snapshot)
 
 
 META = {
