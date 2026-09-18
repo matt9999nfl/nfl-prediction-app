@@ -1,75 +1,60 @@
 # NFL Prediction App
 
-Multi-agent architecture for a data-driven NFL prediction platform. The working hypothesis is that offensive line (OL) performance — and its second-order effects — are systematically undervalued by betting markets, but the architecture is deliberately decoupled from any single data source or rating system so the hypothesis can be tested against multiple inputs.
+An app for running experiments on NFL data. A hypothesis gets stated, scoped, run, measured and recorded, without hand-editing code. The app also makes live weekly picks for the 2026 season and grades them.
 
-## How to Work With This Repo
+Finding an edge is active work, done through the app: backtests, reverse experiments and per-game explanations of why the model made each pick. The project started from an offensive-line hypothesis; that was tested and is now one finished experiment, not the project's goal. See `00-PROJECT-LEAD/PROJECT-CHARTER.md`.
 
-This project is organized around **six specialized Cowork agents**, each owning one domain. Every agent folder contains an `instructions.md` that defines its role, scope, interfaces, and quality bar.
+*Rewritten 2026-09-17. The previous version is in `00-PROJECT-LEAD/archive/README-pre-2026-09-17.md`.*
 
-To work on a specific domain, point Cowork at that folder. The agent reads its `instructions.md`, knows what it owns and what it doesn't, and collaborates with other agents through the contracts in `docs/`.
+## Live
 
-## Agents
+| | |
+|---|---|
+| Dashboard | `http://34.49.20.115` |
+| API | `https://nfl-backend-api-rmaehdhzhq-uc.a.run.app` (`/health` shows the deployed commit) |
+| GCP project | `nfl-model-471509` |
 
-| # | Agent | Mission |
-|---|-------|---------|
-| 00 | PROJECT-LEAD | Architecture decisions, contracts, sequencing |
-| 01 | DATA-PIPELINE | Source data → BigQuery, validated and clean |
-| 02 | MODELING | Features, backtests, predictions |
-| 03 | BACKEND-API | REST API serving predictions and game data |
-| 04 | FRONTEND | Dashboard and game detail UI |
-| 05 | DEVOPS | GCP deployment, scheduling, monitoring |
-| 06 | TESTING-QA | Test suites and quality gates |
+## How the repo is organised
 
-## Shared Documents (`docs/`)
+Work is split across seven agent folders. Each has an `instructions.md` saying what it owns.
 
-These are the cross-agent contracts. All agents read these; PROJECT-LEAD owns and updates them.
+| Folder | Owns |
+|---|---|
+| `00-PROJECT-LEAD` | Plans, task prompts, reviews, decisions, current state (`STATE.md`) |
+| `01-DATA-PIPELINE` | nflverse data and line snapshots into BigQuery, validation |
+| `02-MODELING` | Features, models, the experiment runner, backtests, live picks |
+| `03-BACKEND-API` | FastAPI service, feature catalog, hypothesis chat backend |
+| `04-FRONTEND` | React dashboard |
+| `05-DEVOPS` | Cloud Run, Scheduler, Terraform, CI/CD, alerting |
+| `06-TESTING-QA` | Cross-agent and data-quality tests |
 
-- `ARCHITECTURE.md` — System overview, data flow, component boundaries
-- `API_CONTRACTS.md` — REST endpoint shapes between BACKEND-API and FRONTEND
-- `DECISIONS.md` — Architecture Decision Records (ADRs)
-- `DATA_SOURCES.md` — Inventory of evaluated data sources, status, and licensing notes
+Shared design documents are in `docs/`: `ARCHITECTURE.md`, `API_CONTRACTS.md`, `DECISIONS.md` (ADR log), `DATA_SOURCES.md`.
 
-## Project Constants
+## How work gets done
 
-- **GCP project ID:** `nfl-model-471509`
-- **Existing infrastructure:** Cloud Functions, BigQuery datasets, Cloud Storage buckets
-- **Time budget:** ~10 hrs/week (often in short bursts via remote desktop / DeX)
-- **Stage:** Pre-validation. The OL hypothesis has not yet been backtested on real historical data with multiple data sources.
+1. Matt and PROJECT-LEAD (a Cowork session in `00-PROJECT-LEAD`) agree what to build.
+2. PROJECT-LEAD writes a task prompt to `00-PROJECT-LEAD/PROMPT-<slug>.md`.
+3. Matt starts a Claude Code session at the repo root and points it at the prompt. `CLAUDE.md` at the root gives that session the standing rules.
+4. The session writes `00-PROJECT-LEAD/HANDOFF-<date>-<slug>.md` when done, or a question to `00-PROJECT-LEAD/QUESTIONS.md` if stuck.
 
-## Data Source Strategy
+## Architecture in one picture
 
-The pipeline is built around **swappable adapters**, not a single vendor. Treat each source as an input feature class that earns or loses its place based on backtest contribution.
+```
+nflverse data (scheduled) + uploaded datasets
+        ↓
+DATA-PIPELINE jobs → BigQuery (raw_nflfastr, raw_lines, curated, platform, experiments)
+        ↓
+Experiment runner + weekly production refresh (Cloud Run jobs)
+        ↓
+FastAPI on Cloud Run → React dashboard (Cloud Storage + CDN)
+```
 
-**Primary spine — `nflfastR` / `nflverse`**
-- Free, open-source, play-by-play back to 1999, updated nightly
-- Includes EPA, Win Probability, CPOE, drive/series data
-- Python via `nfl_data_py`
-- No licensing constraints — safe for portfolio and public-facing use
-- This is the foundation; everything else is additive
+Details: `docs/ARCHITECTURE.md`.
 
-**Evaluated supplements** (status tracked in `docs/DATA_SOURCES.md`):
-- **FTN charting data** — accessed via nflverse, manual play charting
-- **NFL Next Gen Stats** — public-facing tables
-- **Sports Info Solutions (SIS)** — pricing/licensing under evaluation
-- **PFF** — *deprioritized*. Ratings didn't match eye test last season; recent restructuring and sentiment make it unreliable as a foundation. May appear later as one signal among many, never the spine.
-- **Scraped sources (PFN, Covers, ESPN)** — used for injury/lineup signals; observe rate limits and ToS
+## Principles
 
-**Portfolio-facing rule:** anything that ends up in the public BACKEND-API or FRONTEND must be from sources that allow it. nflfastR-derived outputs are always safe; anything else is filtered by license tags carried through the pipeline.
-
-## Critical Constraints
-
-1. **Validation before product.** Phase 1 (data + backtest) is a hard gate. Don't invest in BACKEND/FRONTEND polish until the OL hypothesis is validated on historical data with proper out-of-sample testing.
-2. **Source-agnostic design.** No agent assumes a specific vendor. Features are defined by what they measure, not where they came from. This is what lets you swap PFF for nflfastR-derived metrics or add SIS later without rewriting the model.
-3. **Remote-friendly.** The system runs on GCP and is operable via REST API and scheduled jobs. You should be able to trigger runs and check status from a phone or remote desktop without local tooling.
-4. **Respect data source ToS.** Scraping must observe rate limits and robots.txt. Prefer official/permissive sources where they exist.
-
-## Phases
-
-**Phase 1 — Foundation & Validation (Weeks 1–3)**
-DATA-PIPELINE builds the nflfastR-backed historical store. MODELING ports the OL analysis to use nflfastR-derived features and runs the first real backtest. PROJECT-LEAD reviews backtest results before unlocking Phase 2.
-
-**Phase 2 — Service Layer (Weeks 4–5)**
-BACKEND-API exposes validated predictions. FRONTEND ships a minimum dashboard.
-
-**Phase 3 — Productionize (Week 6+)**
-DEVOPS deploys, schedules, and monitors. TESTING-QA hardens with integration tests. Iterate on supplemental data sources based on backtest contribution.
+- **Experiments run through the app,** as recorded configs and runs, not as one-off scripts (ADR-011).
+- **Each experiment sets its own success criteria.** There is no project-level gate (ADR-006).
+- **Features are named for what they measure,** not for the vendor they came from.
+- **Remote-friendly.** Anything weekly runs on a schedule or from an endpoint.
+- **Respect data source terms.** Rate limits, robots.txt, and license tags on anything served publicly.

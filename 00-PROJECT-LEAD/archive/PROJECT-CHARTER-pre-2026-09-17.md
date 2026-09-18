@@ -2,7 +2,7 @@
 
 **Owner:** Matt (project owner) · **Maintained by:** PROJECT-LEAD
 **Status:** Authoritative. **Supersedes every framing statement in every other document in this repo.**
-**Established:** 2026-09-10 · **Amended:** 2026-09-17 (§3, §4, §6.1, §6.3)
+**Established:** 2026-09-10
 
 > **Read this before `ROADMAP.md`, before any phase status document, and before
 > any `instructions.md`.** If another document in this repo implies a different
@@ -40,38 +40,45 @@ each defines its own criteria. Any document, config, code comment, database
 column or UI element implying a project-wide 54% threshold is a survival from
 before that decision.
 
-## 3. Sequencing
+## 3. Sequencing — the part that keeps getting lost
 
-> **Amended 2026-09-17 (Matt).** The original version said "build the app first, model later" and marked edge-finding as not active. That is no longer the direction. The original text is in `archive/PROJECT-CHARTER-pre-2026-09-17.md`.
+**Build the app first. Model later, through the app, during and after the 2026
+season.**
 
-**The platform is still the product. Finding an edge is now active work, and it happens through the platform.**
+Modelling and prediction work is *downstream* of the platform being finished and
+trustworthy. Right now the correct question about any proposed piece of work is:
 
-Matt wants to know why the model makes each pick and which data carries an edge, and to run as many backtests and reverse experiments as possible every week of the 2026 season. The platform exists to make that possible. So the questions to ask about any proposed piece of work are:
+> Does this make the platform better able to state, run, measure or record an
+> experiment?
 
-> Does this help Matt state, run, measure, record or understand an experiment, including the search for an edge?
+and **not**:
 
-and, for anything that changes a model:
+> Does this make the model more accurate?
 
-> Does it go through the platform (configs, the runner, recorded runs), rather than hand-edited feature lists or one-off scripts?
-
-Improving a model outside the platform is still a bypass of the thing being built (ADR-011). Improving it *through* the platform is the point.
-
-Priority is Matt's call. On 2026-09-17 he set per-game explanations as the top build priority: a prediction platform that cannot say why it made a pick cannot be refined except by trial and error.
+The second question is legitimate and will matter — later, and it will be
+answered *by running experiments through the platform*, not by editing feature
+lists by hand. Improving a model outside the platform is not progress on this
+project; it is a bypass of the thing being built (ADR-011).
 
 ## 4. The distinction to hold onto
 
-There are two kinds of work here, and both are active:
+There are two projects here, and they are easy to conflate:
 
-| | Platform work | Edge-finding |
+| | Project A | Project B |
 |---|---|---|
-| **Goal** | A trustworthy, useful experimentation platform | Finding which data carries a real edge |
-| **How** | Building capabilities: explanations, batch testing, reverse experiments, reference metrics | Running experiments through those capabilities |
-| **Success looks like** | An experiment can be run end-to-end, explained, and its result believed | An experiment clears its own stated criteria |
+| **Goal** | A trustworthy, useful experimentation platform | Finding a real edge |
+| **Status** | Nearly there | Has not happened |
+| **Active now** | ✅ Yes — this is the work | ❌ Not yet |
+| **Success looks like** | An experiment can be run end-to-end, and its result believed | A model clears its own stated gate |
 
-Rules that follow from this:
+Everything currently in flight belongs to **Project A**. Live forward prediction
+(DEC-A) belongs to Project A: it makes the platform do something it could not do
+before. It does not, on its own, make any model better, and the app must not
+imply otherwise (DEC-C).
 
-- Live picks do not claim to be validated unless an experiment has cleared its own criteria (DEC-C). This is shown in the app, not argued in chat.
-- Don't volunteer judgments about how good the current model is. Model results are reported by the platform (with reference rows and confidence ranges) and discussed when Matt asks.
+*(This restates §6 of `PRE_SEASON_STATUS_2026-08-31.md`, which had it right. It
+is promoted here because a standing note buried at the end of a dated status
+document does not survive contact with a cold session.)*
 
 ## 5. How a capability gap is framed
 
@@ -99,13 +106,13 @@ be is a model result, and belongs in the experiment log.
 
 ## 6. Standing instruction to every agent and every future session
 
-1. Do not describe the project's purpose as proving the offensive-line hypothesis,
-   or any single hypothesis. It is an app for running experiments, including the
-   search for an edge.
+1. Do not describe this project as being about offensive-line statistics, market
+   inefficiency, or proving any hypothesis. It is about building an app.
 2. Do not introduce, restore or cite a project-level 54% ATS gate. ADR-006
    retired it.
-3. When proposing work, state which platform capability it creates or protects, or
-   which experiment it lets Matt run. If it does neither, say so plainly.
+3. When proposing work, state which platform capability it creates or protects.
+   If it creates none, say so plainly — it may still be worth doing, but it is
+   not platform progress.
 4. `gate_passed = false` on a served prediction means *no experiment has cleared
    its own stated criteria*. It does not mean the project has failed a test.
 5. If you find OL-hypothesis framing or a 54% gate anywhere in this repo — prose,

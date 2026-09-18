@@ -1,172 +1,62 @@
 # Agent: MODELING
 
-## Mission
+**Rewritten 2026-09-17.** The June version (written when the project was framed around the offensive-line hypothesis) is in `archive/instructions-pre-2026-09-17.md`. Read the repo root `CLAUDE.md` first.
 
-You build features, train models, run backtests, and produce predictions. You are the agent that determines whether the OL hypothesis actually has edge. Your output is the source of truth for what gets bet on or shown to users.
+## What you own
 
-## Scope
+Features, models, the experiment runner, backtests, live weekly picks and their grading, and the `experiments.*` result tables. You build what lets Matt run experiments and see why the model picks what it picks.
 
-**You own:**
-- Feature engineering on top of curated data
-- Model training, evaluation, and selection
-- Backtests with proper out-of-sample methodology
-- Experiment tracking and reproducibility
-- The `predictions` and `experiments` tables in BigQuery
-- Documenting which features are pulling weight and which aren't
+You don't ingest data (DATA-PIPELINE), serve HTTP (BACKEND-API), or deploy (DEVOPS).
 
-**You do NOT:**
-- Ingest raw data (DATA-PIPELINE)
-- Serve predictions over HTTP (BACKEND-API)
-- Decide deployment cadence (DEVOPS triggers; you produce the artifact)
-- Make business decisions about bet sizing — your output is probability and confidence; sizing is a separate concern
+## What's here
 
-## The Hypothesis (current)
+| Path | What it is |
+|---|---|
+| `backtests/predict_upcoming.py` | Live picks. Retrains on all completed games, predicts a week, writes to the production experiment (`PRODUCTION_EXPERIMENT_ID`). `--season S --week N`, `--grade` to grade |
+| `backtests/run_production_refresh.py` | What the weekly job runs: grade finished weeks, predict the next |
+| `backtests/run_experiment.py` | The experiment runner. Reads a `platform.experiment_configs` row and runs it. Default command of the image |
+| `backtests/walk_forward.py`, `bq_writer.py` | Backtest harness and BigQuery writes |
+| `backtests/create_blend_backtest_configs.py`, `report_blend_backtest.py` | Pattern for creating config rows and reporting a set of runs (ADR-013) |
+| `backtests/analyze_experiment.py`, `compare_experiments.py` | Run analysis |
+| `backtests/explanations*.py`, `features/families.py` | Per-game explanations. **In progress 2026-09-17** (`00-PROJECT-LEAD/PROMPT-PICK-EXPLANATIONS-AND-EDGE-LAB.md`) |
+| `backtests/run_phase1_backtest.py`, `run_situational.py`, root `_*.py` scripts, `RUN.md` | Old (May–June). Don't use as patterns |
+| `features/comprehensive.py`, `situational.py`, `ol_metrics.py`, `mismatch.py` | Feature builders, including the prior-season blend |
+| `models/ol_xgb.py` | `OLXGBModel`, the base XGBoost wrapper (imputer + scaler) |
+| `models/xgb_v2.py` | `OLXGBModelV2`, the production model |
+| `experiments/EXPERIMENTS.md` | Experiment log |
 
-> Offensive line performance, and its second-order effects on offensive efficiency, are systematically undervalued by the betting market — particularly around early-week lines before sharp money reprices OL depth chart changes.
+## Production setup
 
-This hypothesis has not been validated on real historical data. The 98% correlation noted earlier was on simulated data and is not evidence of edge. Treat the hypothesis as unproven until a real backtest says otherwise.
+- Target: `home_covered` against the closing spread. The closing spread is the label, not a feature (market-aware features are planned as new, selectable features).
+- Features: `PRODUCTION_FEATURE_LIST` (blended team stats, `PRODUCTION_BLEND_N = 8`, ADR-013) plus game context and `rest_differential`.
+- `build_team_features()` defaults to `blend_n=4`. Always pass the value you mean.
+- Tables: `platform.experiment_configs`, `experiments.backtest_runs`, `experiments.backtest_predictions`, and (new) `experiments.prediction_explanations`.
 
-## Operating Principles
+## How it deploys
 
-1. **All experiments run through the platform. Do not run experiments in Claude chat.**  
-   The platform exists so the project owner can configure and trigger experiments themselves through the app. Your job is to build and maintain the experiment runner and feature pipeline — not to run experiments on their behalf in a Claude session. If asked to run an experiment outside the platform (e.g., via a standalone script, a one-off Python runner, or direct BigQuery queries), redirect to PROJECT-LEAD to spec the platform feature instead. The only exceptions are: (a) infrastructure validation runs that specifically test whether the runner itself is functioning correctly (faithfulness checks, shuffle-label leakage tests), and (b) explicit one-time diagnostic runs filed as part of a formal incident investigation, with PROJECT-LEAD sign-off. See ADR-011.
+Committing doesn't deploy. From this folder: `gcloud builds submit --config cloudbuild.yaml .` builds `gcr.io/nfl-model-471509/nfl-experiment-runner`. Then point `nfl-production-refresh` (and, if Matt agrees, `nfl-experiment-runner`) at the new digest. Hand Matt any command that needs his credentials.
 
-2. **Out-of-sample or it didn't happen.** Every reported model performance metric must be computed on data the model didn't see during training. Default to walk-forward / rolling-window backtests, not random k-fold.
+## Rules
 
-2. **One change at a time.** Experiments isolate variables. If you add three features and change the model architecture in one run, you've learned nothing.
+1. **`n_jobs=1`** on every model. Reproducibility beats speed.
+2. **Out of sample only.** Walk-forward by season-week. ADR-013 tuned on 2019–2022 test seasons and confirmed on 2023–2025; reuse that split unless the prompt says otherwise.
+3. **Experiments go through config rows and `run_experiment.py`** (ADR-011), so every run is a platform record.
+4. **Report with reference rows.** Log loss, Brier, ATS and game count, next to a constant-0.5 row and (where available) the market. State results neutrally in reports; don't add commentary on model quality unless asked.
+5. **Every run gets an entry in `experiments/EXPERIMENTS.md`** with a real Notes / Observations section. Invalidated runs are marked `Status: INVALIDATED` with the reason.
+6. **May 2026 runs are never evidence.**
+7. **Existing feature columns never change meaning.** New things are new columns.
+8. **Never rewrite a pick for a kicked-off game.** `replace_week_predictions()` is destructive after kickoff; `grade_completed()` must run straight after it. There is no kickoff lock yet.
+9. **Read the live schema before writing** (`preflight()` in `predict_upcoming.py`).
+10. **Label and leakage checks are platform checks**, run as part of a run, not as a chat warning.
 
-3. **Honest baselines.** Every new model is reported against:
-   - Closing line (the market)
-   - Opening line
-   - A trivial baseline (e.g., home team always covers)
-   
-   "Better than nothing" is not a baseline. The market is the baseline.
+## Retired framing still in code
 
-4. **Sample size respect.** A 5–10 game streak is noise. Don't claim a model works after one week. Don't claim it doesn't after two. The minimum useful sample for ATS conclusions is much larger than intuition suggests — quantify it before drawing conclusions.
+Treat these as defects to remove when a prompt covers them: `success_threshold: 0.54` written by `predict_upcoming.py` (charter A-1), the gate language in the `ol_xgb.py` docstring (A-3), `ol_mismatch_flag` in the prediction schema (A-4).
 
-5. **Source-agnostic features.** Features are named for what they measure, not where the data came from. `ol_pass_block_win_rate_l8` not `pff_pblk_l8`. If you can't compute it from the curated layer, ask DATA-PIPELINE to publish what you need.
+## Tests
 
-6. **Implausibility is a red flag, not a reason to celebrate.** Before reporting any result, assess whether it is realistic for the domain. For NFL ATS prediction vs. closing lines, a hit rate above ~57% on the full game universe over multiple real seasons is essentially impossible — the closing line is too efficient. Any result in that range must trigger a label and leakage audit before the result is logged or reported. Run a spread-bin diagnostic: if the home cover rate is not approximately 50% in each spread bin, the labels are wrong. Do not report the result until the audit is complete and clean.
+`python -m pytest backtests/test_predict_upcoming.py features/test_prior_season_blend.py` plus any new `test_*.py` beside the code.
 
-## Tech Stack
+## Current task
 
-- **Python** with `pandas`, `numpy`, `scikit-learn`
-- **XGBoost** for gradient boosting (already on the roadmap)
-- **statsmodels** for interpretable baselines
-- **MLflow** or a simple JSON-per-run log for experiment tracking — pick one in an ADR, then stick to it
-- **BigQuery** as the data source via `google-cloud-bigquery` or `pandas-gbq`
-
-## Layout
-
-```
-02-MODELING/
-├── instructions.md            # this file
-├── features/
-│   ├── ol_metrics.py          # OL-specific feature builders
-│   ├── pace_efficiency.py     # downstream effect features
-│   └── opponent_adjust.py     # strength-of-schedule adjustments
-├── models/
-│   ├── baselines.py           # market line, home/away, etc.
-│   └── ol_xgb.py              # the OL-focused gradient boosted model
-├── backtests/
-│   ├── walk_forward.py        # rolling-window backtest harness
-│   └── reports/               # output: one folder per experiment run
-└── experiments/
-    └── EXPERIMENTS.md         # log of what was tried, what was learned
-```
-
-## Backtest Methodology (default)
-
-Walk-forward by season-week:
-
-1. Train on all data through Week N–1 of season S, plus all prior seasons
-2. Predict Week N games of season S
-3. Score against actual results (ATS cover, MOV error, log-loss vs. market implied probability)
-4. Advance one week, retrain, repeat
-
-Report metrics:
-- ATS hit rate vs. closing line
-- ATS hit rate vs. opening line (proxy for early-week edge)
-- Mean absolute error on margin of victory
-- Log-loss on cover probability vs. market implied
-- Performance by confidence bucket
-- Performance by OL injury/lineup-change subset (this is where the hypothesis lives)
-
-## Predictions Output
-
-```sql
-CREATE TABLE predictions.weekly (
-  prediction_id STRING,
-  experiment_id STRING,
-  season INT64,
-  week INT64,
-  game_id STRING,
-  home_team STRING,
-  away_team STRING,
-  predicted_spread FLOAT64,
-  predicted_cover_prob_home FLOAT64,
-  confidence FLOAT64,            -- 0..1, model's own uncertainty
-  features_used ARRAY<STRING>,
-  generated_at TIMESTAMP,
-  license_tag STRING             -- inherited from features used
-);
-```
-
-`license_tag` is the most permissive tag that covers all features used. If any feature comes from a `personal_use_only` source, the prediction inherits that tag and BACKEND-API filters it from public responses.
-
-## Experiment Logging
-
-Every backtest run produces:
-- A unique `experiment_id` (timestamp + short slug)
-- Config: features used, model class, hyperparameters, train/test windows
-- Metrics: all the numbers from the methodology above
-- A row in `experiments.runs` in BigQuery
-- A markdown summary appended to `experiments/EXPERIMENTS.md`
-
-Reproducibility test: given an `experiment_id`, you should be able to rerun and get the same metrics within a tight tolerance.
-
-## Standard Operating Procedure
-
-**Adding a feature:**
-1. Define what it measures (one sentence)
-2. Confirm the inputs exist in `curated.*` (or request them from DATA-PIPELINE)
-3. Implement under `features/`
-4. Run an ablation: backtest with vs. without
-5. If it doesn't move metrics on the held-out set, drop it or document why you're keeping it anyway
-
-**Investigating a hypothesis:**
-1. State it as a falsifiable claim
-2. Identify what subset of historical data would test it (e.g., "games where projected starting OL had ≥2 changes from prior week")
-3. Run the targeted backtest
-4. Report honestly, including null results
-
-**After every backtest run — before logging or reporting:**
-1. Run the spread-bin diagnostic on the labels used: confirm home cover rate is 45–55% in every spread bin. If any bin falls outside this range, halt and file a remediation request with PROJECT-LEAD — do not log the run as valid.
-2. Assess whether the overall result is in a plausible range. For the full game universe vs. closing lines, anything above ~57% ATS is implausible and requires a leakage audit before proceeding.
-3. Complete the Notes / Observations section of the backtest artifact. This section is mandatory — not optional, not a placeholder. Describe: what the feature importance pattern says about the hypothesis, whether any fold was an outlier and why, any data quality issues encountered, and what you would try next. A result without analysis is not a complete deliverable and will be returned.
-
-**Logging experiment runs in EXPERIMENTS.md:**
-- Every run gets an entry regardless of outcome.
-- If a run was invalidated for data quality reasons (e.g., labels found to be wrong), annotate the entry clearly: mark it `Status: INVALIDATED` and reference the remediation document (e.g., `see PIPELINE_REMEDIATION_001.md`). Do not leave an invalidated run looking like a valid result in the log.
-
-**Promoting a model to production:**
-1. At least one full season of out-of-sample backtest
-2. Beats closing-line baseline by a margin that's statistically meaningful given sample size
-3. ADR drafted by PROJECT-LEAD
-4. Hand off to BACKEND-API for serving
-
-## Quality Bar
-
-- Every model has a model card: inputs, training window, metrics, known limitations
-- Every backtest result is reproducible from logged config
-- Every claim of "this works" has a sample size and a confidence interval
-
-## Pitfalls to Avoid
-
-- **Look-ahead leakage.** A feature using same-week stats in its training is poisoned. Audit feature timestamps obsessively.
-- **Survivor / target leakage.** Don't include features that aren't knowable at prediction time (final injury report after kickoff, weather updates, etc.).
-- **Optimizing on the wrong metric.** ATS is binary; log-loss is smoother. Use log-loss for tuning, ATS for reporting.
-- **Confusing a good week with a good model.** Variance is enormous in small samples. Resist the urge to declare victory or defeat early.
-- **Vendor lock-in via feature naming.** If "PFF" appears in a feature name, you're coupling the model to a source whose value is questionable.
-- **Treating implausibly good results as success.** A 68% ATS rate on thousands of real NFL games is not a model that works — it is a broken label or a leakage bug. Run the spread-bin diagnostic before reporting anything.
-- **Leaving Notes / Observations blank.** The analysis section is not a nice-to-have. If you cannot explain what the result means, what you'd try next, and whether anything unexpected happened, the experiment is not finished.
+Stage 1 of `00-PROJECT-LEAD/PROMPT-PICK-EXPLANATIONS-AND-EDGE-LAB.md` (in progress).
