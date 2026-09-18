@@ -12,7 +12,7 @@
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +9.5 — favourite: ARI
+- Line at pick time (home perspective): +9.5 · Closing line: +8.5 — favourite (by closing line): LAC
 - Live pick: home (LAC), P(home cover) = 0.537
 - Result: home_covered=False, correct=0
 
@@ -56,7 +56,7 @@ The model favours LAC over ARI, driven mainly by OL pass protection and weather.
 - **SIDE MISMATCH** — the underlying (approximate) explanation model leans AWAY; the live served pick is HOME. Excluded from every "toward the pick" aggregate below.
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +5.5 — favourite: ATL
+- Line at pick time (home perspective): +5.5 · Closing line: +6.5 — favourite (by closing line): PIT
 - Live pick: home (PIT), P(home cover) = 0.511
 - Result: home_covered=True, correct=1
 
@@ -99,7 +99,7 @@ The model favours PIT over ATL, driven mainly by OL pass protection and OL run b
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): -3.5 — favourite: IND
+- Line at pick time (home perspective): -3.5 · Closing line: -3.0 — favourite (by closing line): BAL
 - Live pick: away (BAL), P(home cover) = 0.499
 - Result: home_covered=False, correct=1
 
@@ -142,7 +142,7 @@ The model favours BAL over IND, driven mainly by QB and defence run. Top single 
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): -1.5 — favourite: HOU
+- Line at pick time (home perspective): -1.5 · Closing line: -1.5 — favourite (by closing line): BUF
 - Live pick: away (BUF), P(home cover) = 0.448
 - Result: home_covered=False, correct=1
 
@@ -185,7 +185,7 @@ The model favours BUF over HOU, driven mainly by QB and defence run. Top single 
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): -3.0 — favourite: CAR
+- Line at pick time (home perspective): -3.0 · Closing line: -3.0 — favourite (by closing line): CHI
 - Live pick: away (CHI), P(home cover) = 0.475
 - Result: home_covered=False, correct=1
 
@@ -228,7 +228,7 @@ The model favours CHI over CAR, driven mainly by OL pass protection and OL run b
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +8.5 — favourite: CLE
+- Line at pick time (home perspective): +8.5 · Closing line: +8.5 — favourite (by closing line): JAX
 - Live pick: home (JAX), P(home cover) = 0.534
 - Result: home_covered=True, correct=1
 
@@ -271,7 +271,7 @@ The model favours JAX over CLE, driven mainly by OL pass protection and QB. Top 
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): -3.0 — favourite: NYG
+- Line at pick time (home perspective): -3.0 · Closing line: -3.0 — favourite (by closing line): DAL
 - Live pick: home (NYG), P(home cover) = 0.554
 - Result: home_covered=True, correct=1
 
@@ -314,7 +314,7 @@ The model favours NYG over DAL, driven mainly by QB and defence run. Top single 
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +2.5 — favourite: DEN
+- Line at pick time (home perspective): +2.5 · Closing line: +2.5 — favourite (by closing line): KC
 - Live pick: away (DEN), P(home cover) = 0.459
 - Result: home_covered=True, correct=0
 
@@ -358,7 +358,7 @@ The model favours DEN over KC, driven mainly by OL pass protection and defence p
 - **SIDE MISMATCH** — the underlying (approximate) explanation model leans AWAY; the live served pick is HOME. Excluded from every "toward the pick" aggregate below.
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +1.5 — favourite: GB
+- Line at pick time (home perspective): +1.5 · Closing line: +1.5 — favourite (by closing line): MIN
 - Live pick: home (MIN), P(home cover) = 0.530
 - Result: home_covered=True, correct=1
 
@@ -401,7 +401,7 @@ The model favours MIN over GB, driven mainly by defence pass rush and QB. Top si
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +3.0 — favourite: MIA
+- Line at pick time (home perspective): +3.0 · Closing line: +3.0 — favourite (by closing line): LV
 - Live pick: away (MIA), P(home cover) = 0.469
 - Result: home_covered=True, correct=0
 
@@ -445,7 +445,7 @@ The model favours MIA over LV, driven mainly by form and weather. Top single dri
 - **Regenerated after kickoff** (`clean_forward=false`) — not a clean forward pick.
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +3.0 — favourite: NE
+- Line at pick time (home perspective): +3.0 · Closing line: +3.0 — favourite (by closing line): SEA
 - Live pick: away (NE), P(home cover) = 0.460
 - Result: home_covered=push, correct=n/a
 
@@ -488,7 +488,7 @@ The model favours NE over SEA, driven mainly by QB and defence run. Top single d
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +7.0 — favourite: NO
+- Line at pick time (home perspective): +7.0 · Closing line: +7.0 — favourite (by closing line): DET
 - Live pick: away (NO), P(home cover) = 0.414
 - Result: home_covered=False, correct=1
 
@@ -532,7 +532,7 @@ The model favours NO over DET, driven mainly by OL pass protection and defence p
 - **SIDE MISMATCH** — the underlying (approximate) explanation model leans HOME; the live served pick is AWAY. Excluded from every "toward the pick" aggregate below.
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +1.5 — favourite: NYJ
+- Line at pick time (home perspective): +1.5 · Closing line: +1.5 — favourite (by closing line): TEN
 - Live pick: away (NYJ), P(home cover) = 0.495
 - Result: home_covered=False, correct=1
 
@@ -576,7 +576,7 @@ The model favours NYJ over TEN, driven mainly by coverage/defence other and form
 - **Regenerated after kickoff** (`clean_forward=false`) — not a clean forward pick.
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +3.5 — favourite: SF
+- Line at pick time (home perspective): +3.5 · Closing line: +3.5 — favourite (by closing line): LA
 - Live pick: away (SF), P(home cover) = 0.495
 - Result: home_covered=False, correct=1
 
@@ -619,7 +619,7 @@ The model favours SF over LA, driven mainly by QB and defence run. Top single dr
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +3.5 — favourite: TB
+- Line at pick time (home perspective): +3.5 · Closing line: +3.5 — favourite (by closing line): CIN
 - Live pick: home (CIN), P(home cover) = 0.528
 - Result: home_covered=True, correct=1
 
@@ -662,7 +662,7 @@ The model favours CIN over TB, driven mainly by defence run and coverage/defence
 
 - Approximate explanation (reproduction_max_diff=0.0370).
 
-- Closing spread (home perspective): +6.0 — favourite: WAS
+- Line at pick time (home perspective): +6.0 · Closing line: +6.0 — favourite (by closing line): PHI
 - Live pick: away (WAS), P(home cover) = 0.329
 - Result: home_covered=False, correct=1
 
@@ -743,24 +743,24 @@ The model favours WAS over PHI, driven mainly by coverage/defence other and defe
 
 **Model P(home cover) vs. closing spread, per game (sorted by disagreement with the market):**
 
-| Game | Closing spread | Favourite | Pick | P(home cover) | |P-0.5| |
-|---|---|---|---|---|---|
-| 2026_01_WAS_PHI | +6.0 | WAS | away | 0.329 | 0.171 |
-| 2026_01_NO_DET | +7.0 | NO | away | 0.414 | 0.086 |
-| 2026_01_DAL_NYG | -3.0 | NYG | home | 0.554 | 0.054 |
-| 2026_01_BUF_HOU | -1.5 | HOU | away | 0.448 | 0.052 |
-| 2026_01_DEN_KC | +2.5 | DEN | away | 0.459 | 0.041 |
-| 2026_01_NE_SEA | +3.0 | NE | away | 0.460 | 0.040 |
-| 2026_01_ARI_LAC | +9.5 | ARI | home | 0.537 | 0.037 |
-| 2026_01_CLE_JAX | +8.5 | CLE | home | 0.534 | 0.034 |
-| 2026_01_MIA_LV | +3.0 | MIA | away | 0.469 | 0.031 |
-| 2026_01_GB_MIN | +1.5 | GB | home | 0.530 | 0.030 |
-| 2026_01_TB_CIN | +3.5 | TB | home | 0.528 | 0.028 |
-| 2026_01_CHI_CAR | -3.0 | CAR | away | 0.475 | 0.025 |
-| 2026_01_ATL_PIT | +5.5 | ATL | home | 0.511 | 0.011 |
-| 2026_01_SF_LA | +3.5 | SF | away | 0.495 | 0.005 |
-| 2026_01_NYJ_TEN | +1.5 | NYJ | away | 0.495 | 0.005 |
-| 2026_01_BAL_IND | -3.5 | IND | away | 0.499 | 0.001 |
+| Game | Line at pick time | Closing line | Favourite (closing) | Pick | P(home cover) | |P-0.5| |
+|---|---|---|---|---|---|---|
+| 2026_01_WAS_PHI | +6.0 | +6.0 | PHI | away | 0.329 | 0.171 |
+| 2026_01_NO_DET | +7.0 | +7.0 | DET | away | 0.414 | 0.086 |
+| 2026_01_DAL_NYG | -3.0 | -3.0 | DAL | home | 0.554 | 0.054 |
+| 2026_01_BUF_HOU | -1.5 | -1.5 | BUF | away | 0.448 | 0.052 |
+| 2026_01_DEN_KC | +2.5 | +2.5 | KC | away | 0.459 | 0.041 |
+| 2026_01_NE_SEA | +3.0 | +3.0 | SEA | away | 0.460 | 0.040 |
+| 2026_01_ARI_LAC | +9.5 | +8.5 | LAC | home | 0.537 | 0.037 |
+| 2026_01_CLE_JAX | +8.5 | +8.5 | JAX | home | 0.534 | 0.034 |
+| 2026_01_MIA_LV | +3.0 | +3.0 | LV | away | 0.469 | 0.031 |
+| 2026_01_GB_MIN | +1.5 | +1.5 | MIN | home | 0.530 | 0.030 |
+| 2026_01_TB_CIN | +3.5 | +3.5 | CIN | home | 0.528 | 0.028 |
+| 2026_01_CHI_CAR | -3.0 | -3.0 | CHI | away | 0.475 | 0.025 |
+| 2026_01_ATL_PIT | +5.5 | +6.5 | PIT | home | 0.511 | 0.011 |
+| 2026_01_SF_LA | +3.5 | +3.5 | LA | away | 0.495 | 0.005 |
+| 2026_01_NYJ_TEN | +1.5 | +1.5 | TEN | away | 0.495 | 0.005 |
+| 2026_01_BAL_IND | -3.5 | -3.0 | BAL | away | 0.499 | 0.001 |
 
 Families driving the largest market disagreements:
 - 2026_01_WAS_PHI (|P-0.5|=0.171): top family coverage/defence other (25% of total |contribution|)
@@ -773,22 +773,22 @@ Families pushing toward the pick specifically on underdog picks:
 
 | Family | Toward pick (all underdog picks) | Toward pick (excl. mismatches) |
 |---|---|---|
-| OL pass protection | 50% (n=8) | 50% (n=6) |
-| QB | 75% (n=8) | 83% (n=6) |
-| defence run | 38% (n=8) | 50% (n=6) |
-| defence pass rush | 75% (n=8) | 67% (n=6) |
-| OL run blocking | 50% (n=8) | 33% (n=6) |
-| coverage/defence other | 62% (n=8) | 67% (n=6) |
-| weather | 75% (n=8) | 83% (n=6) |
-| rest | 38% (n=8) | 50% (n=6) |
-| form | 50% (n=8) | 50% (n=6) |
-| run game | 62% (n=8) | 83% (n=6) |
-| record/margin | 50% (n=8) | 33% (n=6) |
-| venue/context | 50% (n=8) | 50% (n=6) |
+| defence run | 75% (n=8) | 86% (n=7) |
+| QB | 62% (n=8) | 71% (n=7) |
+| defence pass rush | 50% (n=8) | 57% (n=7) |
+| OL pass protection | 50% (n=8) | 57% (n=7) |
+| coverage/defence other | 100% (n=8) | 100% (n=7) |
+| form | 62% (n=8) | 57% (n=7) |
+| OL run blocking | 50% (n=8) | 43% (n=7) |
+| weather | 25% (n=8) | 14% (n=7) |
+| run game | 62% (n=8) | 57% (n=7) |
+| rest | 88% (n=8) | 86% (n=7) |
+| record/margin | 12% (n=8) | 14% (n=7) |
+| venue/context | 38% (n=8) | 43% (n=7) |
 
-**Around key numbers:** 8 game(s) within 0.5 of a 3-point spread (2026_01_BAL_IND, 2026_01_CHI_CAR, 2026_01_DAL_NYG, 2026_01_DEN_KC, 2026_01_MIA_LV, 2026_01_NE_SEA, 2026_01_SF_LA, 2026_01_TB_CIN); 1 game(s) within 0.5 of a 7-point spread (2026_01_NO_DET).
+**Around key numbers:** 8 game(s) within 0.5 of a 3-point spread (2026_01_BAL_IND, 2026_01_CHI_CAR, 2026_01_DAL_NYG, 2026_01_DEN_KC, 2026_01_MIA_LV, 2026_01_NE_SEA, 2026_01_SF_LA, 2026_01_TB_CIN); 2 game(s) within 0.5 of a 7-point spread (2026_01_ATL_PIT, 2026_01_NO_DET).
 
-Line movement: `raw_lines.line_snapshots` has no rows for this week (snapshots only began 2026-09-09 and none have been captured yet for this slate).
+Line movement: 16 of 16 games have exactly ONE snapshot in `line_snapshots` — a one-time manual catch-up capture (see HANDOFF-2026-09-18-spread-sign-and-snapshots.md), not a real change-log. "First-seen" and "closing" are the same single observation here; no actual line movement can be shown yet.
 
 Moneyline population by season — 2015: 267/267, 2016: 267/267, 2017: 266/267, 2018: 267/267, 2019: 267/267, 2020: 269/269, 2021: 285/285, 2022: 284/284, 2023: 285/285, 2024: 285/285, 2025: 285/285, 2026: 32/272. 2026 week 1 is fully populated for this slate; de-vigged market probability shown below.
 
@@ -812,22 +812,24 @@ Moneyline population by season — 2015: 267/267, 2016: 267/267, 2017: 266/267, 
 | 2026_01_GB_MIN | 0.532 | 0.530 |
 Note: moneyline win probability and P(home cover) measure different things (straight-up win vs. ATS cover) — shown side by side, not equated.
 
+**Favourite check (closing spread vs. de-vigged moneyline): 100% agree — no disagreements.**
+
 **Per-family correlation with the closing spread (home-cover-oriented, not pick-direction):**
 
 | Family | n games | corr with closing spread |
 |---|---|---|
-| OL run blocking | 16 | -0.529 |
-| defence run | 16 | -0.478 |
-| weather | 16 | 0.450 |
-| OL pass protection | 16 | 0.353 |
-| form | 16 | -0.300 |
-| coverage/defence other | 16 | -0.283 |
-| run game | 16 | 0.196 |
-| rest | 16 | -0.156 |
-| record/margin | 16 | 0.093 |
-| venue/context | 16 | 0.047 |
-| defence pass rush | 16 | 0.009 |
-| QB | 16 | 0.007 |
+| OL run blocking | 16 | -0.532 |
+| defence run | 16 | -0.467 |
+| weather | 16 | 0.414 |
+| OL pass protection | 16 | 0.324 |
+| form | 16 | -0.303 |
+| coverage/defence other | 16 | -0.243 |
+| run game | 16 | 0.173 |
+| rest | 16 | -0.139 |
+| record/margin | 16 | 0.097 |
+| venue/context | 16 | 0.059 |
+| defence pass rush | 16 | 0.013 |
+| QB | 16 | 0.011 |
 
 ## 4. Hand-off list — testable on 2015-2025
 
@@ -835,6 +837,6 @@ Note: moneyline win probability and P(home cover) measure different things (stra
 2. Picks where QB is the top driver and it pushed toward the pick (true in 77% of the 13 non-mismatched games) — test ATS performance on 2015-2025 for games where this family is the #1 driver.
 3. OL run blocking correlates most with the closing spread (r=-0.53) and is largely repeating the market — test whether excluding it from the feature set changes backtest log loss.
 4. QB correlates least with the closing spread (r=0.01) — test whether picks driven by this family beat the market ATS on 2015-2025, independent of the spread.
-5. Picks where the model backs the underdog and QB is the top driver — test ATS performance on 2015-2025 for underdog picks split by this family's direction.
+5. Picks where the model backs the underdog and coverage/defence other is the top driver — test ATS performance on 2015-2025 for underdog picks split by this family's direction.
 6. Games whose #1 driver is QB on the away side (5 of this week's games) — test whether this shape recurs and beats the market ATS on 2015-2025.
 7. Games within half a point of the 3 or 7 key numbers — test whether the model's calibration (P(cover) vs. actual cover rate) differs near these numbers on 2015-2025.

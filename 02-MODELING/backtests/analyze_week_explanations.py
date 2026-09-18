@@ -58,6 +58,9 @@ REPORTS_DIR = ROOT / "backtests" / "reports"
 RECONSTRUCTION_TOLERANCE = 1e-4
 WEATHER_FEATURES = {"temp", "wind", "roof_dome"}
 KEY_NUMBERS = (3, 7)
+# Part A.3, PROMPT-FIX-SPREAD-SIGN-AND-LINE-SNAPSHOTS.md: spread-favourite and
+# moneyline-favourite must agree at least this often, where moneylines exist.
+FAVORITE_AGREEMENT_FLOOR = 0.80
 
 # Dated record of side-mismatches already confirmed against the live pick
 # (see HANDOFF-2026-09-18-stage1-finish.md). If a listed week's mismatch set
@@ -117,9 +120,18 @@ def fetch_explanations(
 def fetch_live_games(
     client: bigquery.Client, season: int, week: int, experiment_id: str = PRODUCTION_EXPERIMENT_ID,
 ) -> pd.DataFrame:
-    """The served pick, closing spread and (if graded) result for every game."""
+    """
+    The served pick, the line at pick time, and (if graded) result for every
+    game. `backtest_predictions.home_spread_close` is a snapshot of
+    curated.games' spread taken when predict_upcoming.py generated the pick —
+    it never updates after that, unlike curated.games' own column, which
+    stays live until kickoff (see snapshot_lines.py). Renamed to
+    pick_time_spread here so it can't be confused with the closing line
+    (fetch_game_results pulls that separately from curated.games).
+    """
     query = f"""
-        SELECT game_id, home_team, away_team, home_spread_close,
+        SELECT game_id, home_team, away_team,
+               home_spread_close AS pick_time_spread,
                predicted_home_cover_prob AS live_predicted_home_cover_prob,
                predicted_side AS live_predicted_side,
                actual_home_covered, correct
@@ -136,11 +148,18 @@ def fetch_live_games(
 
 
 def fetch_game_results(client: bigquery.Client, season: int, week: int) -> pd.DataFrame:
-    """home_score/away_score from curated.games — needed to tell a push (game
-    played, actual_home_covered NULL because the margin equalled the spread
-    exactly) apart from a game that simply hasn't been played yet (also NULL)."""
+    """
+    home_score/away_score/home_spread_close from curated.games — the scores
+    tell a push (game played, actual_home_covered NULL because the margin
+    equalled the spread exactly) apart from a game that simply hasn't been
+    played yet (also NULL). home_spread_close here is CURATED'S OWN current
+    value — the closing line (live until kickoff, frozen after — see
+    snapshot_lines.py) — renamed closing_spread so it isn't confused with the
+    pick-time spread fetch_live_games pulls from backtest_predictions.
+    """
     query = """
-        SELECT game_id, home_score, away_score
+        SELECT game_id, home_score, away_score,
+               home_spread_close AS closing_spread
         FROM `nfl-model-471509.curated.games`
         WHERE season = @season AND week = @week
     """
@@ -196,6 +215,7 @@ def fetch_line_snapshots(client: bigquery.Client, season: int, week: int) -> pd.
         )
         SELECT
           game_id,
+          COUNT(*) AS n_snapshots,
           MAX(IF(rn_first = 1, spread_line, NULL)) AS first_seen_spread,
           MAX(IF(rn_first = 1, captured_at, NULL)) AS first_seen_at,
           MAX(IF(rn_last_pre_kickoff = 1, spread_line, NULL)) AS last_seen_spread
@@ -366,19 +386,19 @@ def spread_family_correlation(exp_df: pd.DataFrame, games_df: pd.DataFrame) -> p
     """
     Per family: Pearson r between its net home-cover-oriented contribution
     (contribution_logodds, NOT pick-direction — a fixed orientation is needed
-    to correlate against a fixed-orientation spread) and home_spread_close,
+    to correlate against a fixed-orientation spread) and closing_spread,
     across all games in the week. A family tracking the spread is largely
     repeating the market; one that doesn't is where an edge would have to
     come from.
     """
     fam_game = exp_df.groupby(["game_id", "family"])["contribution_logodds"].sum().unstack("family")
-    fam_game = fam_game.join(games_df.set_index("game_id")["home_spread_close"])
+    fam_game = fam_game.join(games_df.set_index("game_id")["closing_spread"])
     rows = []
     for fam in FAMILIES:
         if fam not in fam_game.columns:
             continue
-        pair = fam_game[[fam, "home_spread_close"]].dropna()
-        r = pair[fam].corr(pair["home_spread_close"]) if len(pair) > 2 else float("nan")
+        pair = fam_game[[fam, "closing_spread"]].dropna()
+        r = pair[fam].corr(pair["closing_spread"]) if len(pair) > 2 else float("nan")
         rows.append({"family": fam, "n_games": len(pair), "corr_with_closing_spread": r})
     return pd.DataFrame(rows).sort_values("corr_with_closing_spread", key=lambda s: s.abs(), ascending=False)
 
@@ -396,23 +416,77 @@ def devig_moneylines(ml_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def favorite_or_underdog(home_spread_close: float) -> str:
-    if pd.isna(home_spread_close):
+def favorite_or_underdog(spread: float) -> str:
+    """
+    Which side is favoured by a spread carrying curated.games' convention:
+    POSITIVE home_spread_close means the HOME team is favoured (nflverse
+    spread_line convention — the opposite of betting notation, where a
+    favourite is written negative). Verified from data in
+    01-DATA-PIPELINE/scripts/verify_label_convention.py (C1: favourites win
+    outright ~66-70% of the time under this reading; the inverted reading
+    lands near 30%). Getting this backwards is a recurring failure mode here
+    (INC-001, 2026-09-10, 2026-09-14, 2026-09-18) — see test_favorite_or_underdog
+    and test_ats_label_fixture_set for the regression guards.
+    """
+    if pd.isna(spread):
         return "unknown"
-    if home_spread_close < 0:
+    if spread > 0:
         return "home"
-    if home_spread_close > 0:
+    if spread < 0:
         return "away"
     return "pickem"
 
 
-def near_key_number(home_spread_close: float, tolerance: float = 0.5) -> int | None:
-    if pd.isna(home_spread_close):
+def near_key_number(spread: float, tolerance: float = 0.5) -> int | None:
+    if pd.isna(spread):
         return None
     for k in KEY_NUMBERS:
-        if abs(abs(home_spread_close) - k) <= tolerance:
+        if abs(abs(spread) - k) <= tolerance:
             return k
     return None
+
+
+def favorite_agreement(games: pd.DataFrame, ml_table: pd.DataFrame) -> tuple[float, pd.DataFrame]:
+    """
+    Data-derived guard: the favourite implied by the closing spread should
+    agree with the favourite implied by the de-vigged moneyline on almost
+    every game (a moneyline favourite is whichever side prices above 50% —
+    home_devigged_prob > 0.5 means home). Returns (agreement_fraction,
+    mismatches_df). Disagreement here would mean the spread-sign convention
+    in this script is STILL wrong, not just a market quirk (moneyline and
+    spread favourites virtually always agree in the NFL).
+    """
+    merged = games[["game_id", "favorite"]].merge(
+        ml_table[["game_id", "home_devigged_prob"]], on="game_id", how="inner",
+    )
+    merged["moneyline_favorite"] = np.where(merged["home_devigged_prob"] > 0.5, "home", "away")
+    merged["agrees"] = merged["favorite"] == merged["moneyline_favorite"]
+    frac = merged["agrees"].mean() if len(merged) else float("nan")
+    mismatches = merged[~merged["agrees"]].copy()
+    return frac, mismatches
+
+
+def enforce_favorite_agreement(
+    games: pd.DataFrame, ml_table: pd.DataFrame, season: int, week: int,
+    floor: float = FAVORITE_AGREEMENT_FLOOR,
+) -> tuple[float, pd.DataFrame]:
+    """
+    Raises SystemExit (writing nothing) if the spread-favourite/moneyline-
+    favourite agreement falls below `floor`. Split out from run() so the
+    guard itself — not just favorite_agreement()'s arithmetic — is directly
+    unit-testable without mocking BigQuery.
+    """
+    agree_frac, mismatches = favorite_agreement(games, ml_table)
+    if agree_frac < floor:
+        names = ", ".join(mismatches["game_id"].tolist())
+        raise SystemExit(
+            f"STOP: spread-favourite vs. moneyline-favourite agreement is {agree_frac:.0%} "
+            f"(need >= {floor:.0%}) for {season} week {week}. "
+            f"Disagreements: {names}. This means the spread-sign convention is wrong again, "
+            "not a market quirk. Write this to 00-PROJECT-LEAD/QUESTIONS.md and stop — "
+            "nothing was written."
+        )
+    return agree_frac, mismatches
 
 
 # ── Report assembly ──────────────────────────────────────────────────────────
@@ -449,12 +523,18 @@ def build_games_frame(
     games["clean_forward"] = clean_fwd
     games["reproduction_max_diff"] = repro_diff
     games["side_mismatch"] = games["explanation_predicted_side"] != games["live_predicted_side"]
-    games["favorite"] = games["home_spread_close"].apply(favorite_or_underdog)
+
+    results = results_df.set_index("game_id")
+    games["closing_spread"] = results["closing_spread"]
+    # Favourite/underdog and key-number sections use the CLOSING line, not the
+    # line at pick time (PROMPT-FIX-SPREAD-SIGN-AND-LINE-SNAPSHOTS.md Part A.4)
+    # — the two can differ (line moves between pick generation and kickoff).
+    games["favorite"] = games["closing_spread"].apply(favorite_or_underdog)
     games["picked_is_favorite"] = games["favorite"] == games["live_predicted_side"]
-    games["near_key_number"] = games["home_spread_close"].apply(near_key_number)
+    games["near_key_number"] = games["closing_spread"].apply(near_key_number)
     games["market_disagreement"] = (games["live_predicted_home_cover_prob"] - 0.5).abs()
 
-    scores = results_df.set_index("game_id")[["home_score", "away_score"]]
+    scores = results[["home_score", "away_score"]]
     games["played"] = games.index.map(
         lambda gid: bool(pd.notna(scores.at[gid, "home_score"]) and pd.notna(scores.at[gid, "away_score"]))
         if gid in scores.index else False
@@ -502,7 +582,6 @@ def game_section_markdown(
     if flags:
         lines.append("")
 
-    spread = game["home_spread_close"]
     fav = game["favorite"]
     fav_txt = {"home": game["home_team"], "away": game["away_team"], "pickem": "pick'em"}.get(fav, "n/a")
     if not game["played"]:
@@ -512,7 +591,8 @@ def game_section_markdown(
     else:
         result_txt = str(bool(game["actual_home_covered"]))
     lines += [
-        f"- Closing spread (home perspective): {_fmt(spread, '+.1f')} — favourite: {fav_txt}",
+        f"- Line at pick time (home perspective): {_fmt(game['pick_time_spread'], '+.1f')} · "
+        f"Closing line: {_fmt(game['closing_spread'], '+.1f')} — favourite (by closing line): {fav_txt}",
         f"- Live pick: {game['live_predicted_side']} ({game['home_team'] if game['live_predicted_side']=='home' else game['away_team']}), "
         f"P(home cover) = {_fmt(game['live_predicted_home_cover_prob'], '.3f')}",
         f"- Result: home_covered={result_txt}, correct={game['correct'] if pd.notna(game['correct']) else 'n/a'}",
@@ -650,12 +730,13 @@ def render_report(
     parts.append("")
     parts.append("**Model P(home cover) vs. closing spread, per game (sorted by disagreement with the market):**")
     parts.append("")
-    parts.append("| Game | Closing spread | Favourite | Pick | P(home cover) | |P-0.5| |")
-    parts.append("|---|---|---|---|---|---|")
+    parts.append("| Game | Line at pick time | Closing line | Favourite (closing) | Pick | P(home cover) | |P-0.5| |")
+    parts.append("|---|---|---|---|---|---|---|")
     for _, g in games.sort_values("market_disagreement", ascending=False).iterrows():
         fav_txt = {"home": g["home_team"], "away": g["away_team"], "pickem": "pick'em"}.get(g["favorite"], "n/a")
         parts.append(
-            f"| {g['game_id']} | {_fmt(g['home_spread_close'], '+.1f')} | {fav_txt} | {g['live_predicted_side']} | "
+            f"| {g['game_id']} | {_fmt(g['pick_time_spread'], '+.1f')} | {_fmt(g['closing_spread'], '+.1f')} | "
+            f"{fav_txt} | {g['live_predicted_side']} | "
             f"{_fmt(g['live_predicted_home_cover_prob'], '.3f')} | {_fmt(g['market_disagreement'], '.3f')} |"
         )
     parts.append("")
@@ -720,6 +801,25 @@ def render_report(
             "Note: moneyline win probability and P(home cover) measure different things "
             "(straight-up win vs. ATS cover) — shown side by side, not equated."
         )
+        parts.append("")
+
+    agree_frac = games.attrs.get("favorite_agreement_frac")
+    if agree_frac is not None:
+        mismatches = games.attrs.get("favorite_agreement_mismatches")
+        if mismatches is not None and not mismatches.empty:
+            detail = "; ".join(
+                f"{r['game_id']} (spread favours {r['favorite']}, moneyline favours {r['moneyline_favorite']})"
+                for _, r in mismatches.iterrows()
+            )
+            parts.append(
+                f"**Favourite check (closing spread vs. de-vigged moneyline): {agree_frac:.0%} agree.** "
+                f"Disagreements: {detail}."
+            )
+        else:
+            parts.append(
+                f"**Favourite check (closing spread vs. de-vigged moneyline): {agree_frac:.0%} agree "
+                "— no disagreements.**"
+            )
         parts.append("")
 
     corr = spread_family_correlation(exp_df, games)
@@ -841,6 +941,15 @@ def run(client: bigquery.Client, season: int, week: int) -> tuple[str, dict[str,
             f"Moneyline population by season — {pop_summary}. {season} week {week} is fully populated "
             "for this slate; de-vigged market probability shown below."
         )
+
+        # Data-derived guard (PROMPT-FIX-SPREAD-SIGN-AND-LINE-SNAPSHOTS.md Part
+        # A.3): the closing-spread favourite must agree with the de-vigged
+        # moneyline favourite on at least 80% of games, or the sign convention
+        # in this script is wrong again, not just a market quirk — stop and
+        # write nothing rather than publish a report built on a flipped sign.
+        agree_frac, mismatches = enforce_favorite_agreement(games, ml_table, season, week)
+        games.attrs["favorite_agreement_frac"] = agree_frac
+        games.attrs["favorite_agreement_mismatches"] = mismatches
     else:
         games.attrs["moneyline_note"] = (
             f"Moneyline population by season — {pop_summary}. {season} week {week} is not fully "
@@ -851,13 +960,24 @@ def run(client: bigquery.Client, season: int, week: int) -> tuple[str, dict[str,
     if snaps.empty:
         games.attrs["line_snapshot_note"] = (
             "Line movement: `raw_lines.line_snapshots` has no rows for this week "
-            "(snapshots only began 2026-09-09 and none have been captured yet for this slate)."
+            "(the scheduled pipeline has never executed this capture — see "
+            "HANDOFF-2026-09-18-spread-sign-and-snapshots.md)."
+        )
+    elif (snaps["n_snapshots"] <= 1).all():
+        games.attrs["line_snapshot_note"] = (
+            f"Line movement: {snaps['first_seen_spread'].notna().sum()} of {len(games)} games have "
+            "exactly ONE snapshot in `line_snapshots` — a one-time manual catch-up capture "
+            f"(see HANDOFF-2026-09-18-spread-sign-and-snapshots.md), not a real change-log. "
+            "\"First-seen\" and \"closing\" are the same single observation here; no actual line "
+            "movement can be shown yet."
         )
     else:
         n_first_seen = snaps["first_seen_spread"].notna().sum()
+        n_moved = (snaps["first_seen_spread"] != snaps["last_seen_spread"]).sum()
         games.attrs["line_snapshot_note"] = (
             f"Line movement: {n_first_seen} of {len(games)} games have a first-seen line in "
-            "`line_snapshots`. Snapshots only began 2026-09-09, so this is a lower bound, not full coverage."
+            f"`line_snapshots`, {n_moved} of which moved between first-seen and close. "
+            "Snapshots only began 2026-09-09, so this is a lower bound, not full coverage."
         )
 
     report, csvs = render_report(season, week, games, exp_resigned, approximate, has_results)

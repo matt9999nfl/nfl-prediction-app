@@ -1,8 +1,10 @@
 # Phase 1 Validation Report
 
-**Generated:** 2026-05-03 10:57 UTC
+**Generated:** 2026-09-18 03:12 UTC
 **Project:** `nfl-model-471509`
-**Seasons:** 2015–2025
+**Seasons:** 2015–2026
+
+> Checks for **2026** are advisory: that season is still being played, so completed-season thresholds do not apply to it yet. They are shown as ⚠️ IN-PROGRESS and do not fail this report. Every earlier season is held to the full standard.
 
 1. Row Counts — Raw Tables
 ==========================
@@ -23,6 +25,7 @@
 | 2023 | 49,665 | ✅ |
 | 2024 | 49,492 | ✅ |
 | 2025 | 48,771 | ✅ |
+| 2026 | 2,756 | ❌ |
 
 ### raw_nflfastr.schedules
 
@@ -39,6 +42,7 @@
 | 2023 | 285 | ✅ |
 | 2024 | 285 | ✅ |
 | 2025 | 285 | ✅ |
+| 2026 | 272 | ✅ |
 
 ### raw_nflfastr.rosters
 
@@ -55,6 +59,7 @@
 | 2023 | 45,655 | ✅ |
 | 2024 | 46,579 | ✅ |
 | 2025 | 46,849 | ✅ |
+| 2026 | 2,963 | ✅ |
 
 2. Row Counts — Curated Tables
 ==============================
@@ -75,22 +80,24 @@
 | 2023 | 272 | ✅ |
 | 2024 | 272 | ✅ |
 | 2025 | 272 | ✅ |
+| 2026 | 272 | ✅ |
 
 ### curated.plays
 
 | Season | Plays | Check |
 |--------|-------|-------|
-| 2015 | 46,141 | ✅ |
-| 2016 | 45,707 | ✅ |
-| 2017 | 45,268 | ✅ |
-| 2018 | 45,120 | ✅ |
-| 2019 | 45,339 | ✅ |
-| 2020 | 45,406 | ✅ |
-| 2021 | 47,651 | ✅ |
-| 2022 | 47,157 | ✅ |
-| 2023 | 47,399 | ✅ |
-| 2024 | 47,274 | ✅ |
-| 2025 | 46,452 | ✅ |
+| 2015 | 43,799 | ✅ |
+| 2016 | 43,395 | ✅ |
+| 2017 | 42,929 | ✅ |
+| 2018 | 42,697 | ✅ |
+| 2019 | 43,012 | ✅ |
+| 2020 | 43,004 | ✅ |
+| 2021 | 45,049 | ✅ |
+| 2022 | 44,558 | ✅ |
+| 2023 | 44,877 | ✅ |
+| 2024 | 44,686 | ✅ |
+| 2025 | 43,868 | ✅ |
+| 2026 | 2,616 | ❌ |
 
 3. Null Rate Checks
 ===================
@@ -111,6 +118,7 @@
 | 2023 | 0 | 272 | 0.0% | ✅ |
 | 2024 | 0 | 272 | 0.0% | ✅ |
 | 2025 | 0 | 272 | 0.0% | ✅ |
+| 2026 | 240 | 272 | 88.2% | ❌ |
 
 ### curated.plays — EPA null rate on pass/run plays
 
@@ -121,17 +129,54 @@
 | 2017 | 0 | 32,068 | 0.0% | ✅ |
 | 2018 | 0 | 31,880 | 0.0% | ✅ |
 | 2019 | 1 | 32,157 | 0.0% | ✅ |
-| 2020 | 0 | 32,572 | 0.0% | ✅ |
+| 2020 | 0 | 32,575 | 0.0% | ✅ |
 | 2021 | 0 | 34,139 | 0.0% | ✅ |
 | 2022 | 0 | 33,770 | 0.0% | ✅ |
 | 2023 | 0 | 33,957 | 0.0% | ✅ |
-| 2024 | 0 | 33,471 | 0.0% | ✅ |
-| 2025 | 0 | 32,937 | 0.0% | ✅ |
+| 2024 | 0 | 33,470 | 0.0% | ✅ |
+| 2025 | 0 | 32,941 | 0.0% | ✅ |
+| 2026 | 0 | 1,911 | 0.0% | ✅ |
 
 ### curated.plays — qb_hit / sack null rate (must be 0%)
 
-- qb_hit nulls: 0 / 508,914  ✅
-- sack nulls:   0 / 508,914  ✅
+- qb_hit nulls: 0 / 484,490  ✅
+- sack nulls:   0 / 484,490  ✅
+
+3b. Semantic Check — home_covered Cover Rate
+============================================
+
+
+This check guards against a sign-inversion bug in `derive_home_covered`.
+Because closing spreads represent the market's best estimate, the home team
+cover rate in every spread bin must be approximately 50% (efficient market
+hypothesis). A monotonic pattern (e.g. heavy favourites covering at <10%,
+heavy underdogs covering at >90%) is a definitive sign of label inversion.
+See INC-001 and PIPELINE_REMEDIATION_002.md for history.
+
+| Spread Bucket | Covers | Total | Cover % | Check |
+|---------------|--------|-------|---------|-------|
+| home_dog_10+ | 135 | 266 | 50.8% | ✅ |
+| home_dog_3-10 | 536 | 1128 | 47.5% | ✅ |
+| home_fav_10+ | 43 | 79 | 54.4% | ✅ |
+| home_fav_3-10 | 350 | 692 | 50.6% | ✅ |
+| pick_em | 320 | 672 | 47.6% | ✅ |
+
+- **Overall cover rate (2015–2026):** 48.8%  (1384/2837)  ✅
+
+3c. Line Snapshot Freshness
+===========================
+
+
+`raw_lines.line_snapshots` is written by `snapshot_lines.py`, called
+non-fatally from `run_ingest_schedules()` on every pipeline run so a snapshot
+failure never blocks PBP/rosters ingest. Non-fatal previously also meant
+invisible: the failure (or the deployed image simply not containing this
+code) was only ever a line in Cloud Logging, never in this report or the
+run's exit code -- the same silent-failure-only-logs-can-find pattern as
+HC-S6-F6. This check makes a stale or empty snapshot table fail the run
+visibly.
+
+- `line_snapshots`: 3,300 row(s) total, latest capture 0.0 day(s) old (latest capture 2026-09-18 03:06:54.556173+00:00)  ✅
 
 4. Integrity Checks
 ===================
@@ -139,12 +184,12 @@
 
 - Orphan plays (game_id not in curated.games): 0  ✅
 - Duplicate game_ids in curated.games: 0  ✅
-- Season range in curated.games: 2015–2025  ✅
+- Season range in curated.games: 2015–2026  ✅
 
 5. Check Summary
 ================
 
-**Total checks:** 71  |  **Passed:** 71  |  **Failed:** 0
+**Total checks:** 84  |  **Passed:** 81  |  **Failed:** 0
 
 **Overall:** ✅ ALL CHECKS PASSED — ready for handoff
 

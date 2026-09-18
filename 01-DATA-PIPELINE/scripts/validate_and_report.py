@@ -8,12 +8,16 @@ Usage:
 Prerequisite: all ingest + curated build scripts must have completed.
 """
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, ".")
 
 from scripts.bq_utils import PROJECT, get_client
+from scripts.line_snapshot_freshness import (
+    LINE_SNAPSHOT_MAX_AGE_DAYS,
+    evaluate_line_snapshot_freshness,
+)
 
 REPORT_PATH = Path(__file__).parent.parent / "VALIDATION_REPORT.md"
 
@@ -302,6 +306,41 @@ See INC-001 and PIPELINE_REMEDIATION_002.md for history.
             f" {ov_min_s}–{ov_max_s}. This is a strong indicator of a sign-inversion bug in"
             f" `derive_home_covered`. Do NOT hand off to MODELING until this is resolved."
             f" See INC-001 and PIPELINE_REMEDIATION_002.md."
+        )
+
+    # ------------------------------------------------------------------ #
+    # 3c. Line snapshot freshness                                          #
+    # ------------------------------------------------------------------ #
+    h("3c. Line Snapshot Freshness")
+    row("""
+`raw_lines.line_snapshots` is written by `snapshot_lines.py`, called
+non-fatally from `run_ingest_schedules()` on every pipeline run so a snapshot
+failure never blocks PBP/rosters ingest. Non-fatal previously also meant
+invisible: the failure (or the deployed image simply not containing this
+code) was only ever a line in Cloud Logging, never in this report or the
+run's exit code -- the same silent-failure-only-logs-can-find pattern as
+HC-S6-F6. This check makes a stale or empty snapshot table fail the run
+visibly.
+""")
+    snap_freshness = run_query(client, f"""
+        SELECT COUNT(*) AS n_rows, MAX(captured_at) AS latest
+        FROM `{PROJECT}.raw_lines.line_snapshots`
+    """)
+    sf = snap_freshness.iloc[0]
+    n_rows = int(sf["n_rows"])
+    latest = sf["latest"]
+    snap_ok, age_txt = evaluate_line_snapshot_freshness(n_rows, latest, datetime.now(timezone.utc))
+    all_pass &= check(snap_ok, "line_snapshots_freshness", check_results)
+    row(f"- `line_snapshots`: {n_rows:,} row(s) total, latest capture {age_txt}  {'✅' if snap_ok else '❌'}")
+    if not snap_ok:
+        row(
+            f"\n  **ERROR:** no line snapshot has been captured in the last "
+            f"{LINE_SNAPSHOT_MAX_AGE_DAYS} days (or the table is empty). The "
+            "`snapshot()` call inside `run_ingest_schedules()` may be failing, or "
+            "the deployed pipeline image may predate `snapshot_lines.py` (added "
+            "2026-09-09) -- check the execution logs for \"Line snapshot\" / "
+            "\"SNAPSHOT_FAILED\", and confirm the deployed `nfl-data-pipeline` "
+            "image was built after that commit."
         )
 
     # ------------------------------------------------------------------ #

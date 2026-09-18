@@ -49,11 +49,18 @@ def _live_row(game_id, live_side, **kw):
         "game_id": game_id,
         "home_team": kw.get("home_team", "H"),
         "away_team": kw.get("away_team", "A"),
-        "home_spread_close": kw.get("home_spread_close", -2.0),
+        "pick_time_spread": kw.get("pick_time_spread", -2.0),
         "live_predicted_home_cover_prob": kw.get("live_predicted_home_cover_prob", 0.6),
         "live_predicted_side": live_side,
         "actual_home_covered": kw.get("actual_home_covered", pd.NA),
         "correct": kw.get("correct", pd.NA),
+    }
+
+
+def _results_row(game_id, home_score, away_score, closing_spread):
+    return {
+        "game_id": game_id, "home_score": home_score, "away_score": away_score,
+        "closing_spread": closing_spread,
     }
 
 
@@ -157,16 +164,148 @@ def test_check_reconstruction_fails_on_a_real_mismatch():
 
 
 # ── favourite/underdog and key-number helpers ────────────────────────────────
+#
+# curated.games' home_spread_close follows the nflverse spread_line
+# convention: POSITIVE means the HOME team is favoured (the opposite of
+# betting notation). Getting this backwards is a recurring failure here
+# (INC-001, 2026-09-10, 2026-09-14, 2026-09-18) —
+# PROMPT-FIX-SPREAD-SIGN-AND-LINE-SNAPSHOTS.md requires tests that fail if it
+# flips back.
 
 
-@pytest.mark.parametrize("spread,expected", [(-3.0, "home"), (3.0, "away"), (0.0, "pickem"), (None, "unknown")])
+@pytest.mark.parametrize("spread,expected", [(-3.0, "away"), (3.0, "home"), (0.0, "pickem"), (None, "unknown")])
 def test_favorite_or_underdog(spread, expected):
     assert awe.favorite_or_underdog(spread) == expected
+
+
+def test_positive_spread_9_5_makes_the_home_team_the_favourite():
+    """
+    2026_01_ARI_LAC: home_spread_close=+9.5, home_team=LAC. The report
+    previously (wrongly) called ARI the favourite. LAC is the favourite —
+    confirmed independently by a de-vigged home moneyline of 0.787
+    (HANDOFF-2026-09-18-week1-analysis.md / PROMPT-FIX-SPREAD-SIGN-AND-LINE-SNAPSHOTS.md).
+    """
+    assert awe.favorite_or_underdog(9.5) == "home"
+
+
+def test_a_pick_on_the_home_side_is_a_pick_on_the_favourite_when_spread_is_positive():
+    games = pd.DataFrame([{
+        "game_id": "2026_01_ARI_LAC", "closing_spread": 9.5, "live_predicted_side": "home",
+    }])
+    games["favorite"] = games["closing_spread"].apply(awe.favorite_or_underdog)
+    games["picked_is_favorite"] = games["favorite"] == games["live_predicted_side"]
+    assert games.iloc[0]["favorite"] == "home"
+    assert bool(games.iloc[0]["picked_is_favorite"]) is True
 
 
 @pytest.mark.parametrize("spread,expected", [(3.0, 3), (-3.2, 3), (7.4, 7), (10.0, None), (0.0, None)])
 def test_near_key_number(spread, expected):
     assert awe.near_key_number(spread) == expected
+
+
+# ── ATS label re-derivation against a fixture set of real 2026 week-1 rows ──
+# margin > spread (this convention's ATS formula, matching
+# verify_label_convention.py's C2 and predict_upcoming.grade_completed) must
+# reproduce the label actually stored in curated.games. None of this script's
+# code derives home_covered — this is a static regression fixture proving the
+# convention this script's favourite/underdog logic relies on, independent of
+# any production code path.
+_ATS_FIXTURES = [
+    # game_id, home_score, away_score, home_spread_close, stored home_covered
+    ("2026_01_ARI_LAC", 14, 26, 9.5, False),
+    ("2026_01_ATL_PIT", 20, 13, 6.5, True),
+    ("2026_01_BAL_IND", 23, 41, -3.0, False),
+    ("2026_01_DEN_KC", 31, 10, 2.5, True),
+    ("2026_01_NE_SEA", 13, 10, 3.0, None),  # push: margin == spread
+]
+
+
+@pytest.mark.parametrize("game_id,home_score,away_score,spread,stored", _ATS_FIXTURES)
+def test_ats_label_fixture_set(game_id, home_score, away_score, spread, stored):
+    margin = home_score - away_score
+    expected = None if margin == spread else (margin > spread)
+    assert expected == stored, f"{game_id}: margin={margin:+g} spread={spread:+g}"
+
+
+# ── favourite agreement guard (spread vs. de-vigged moneyline) ──────────────
+
+
+def test_favorite_agreement_all_agree():
+    games = pd.DataFrame([
+        {"game_id": "G1", "favorite": "home"},
+        {"game_id": "G2", "favorite": "away"},
+    ])
+    ml_table = pd.DataFrame([
+        {"game_id": "G1", "home_devigged_prob": 0.7},
+        {"game_id": "G2", "home_devigged_prob": 0.3},
+    ])
+    frac, mismatches = awe.favorite_agreement(games, ml_table)
+    assert frac == 1.0
+    assert mismatches.empty
+
+
+def test_favorite_agreement_detects_mismatch():
+    games = pd.DataFrame([
+        {"game_id": "G1", "favorite": "home"},
+        {"game_id": "G2", "favorite": "home"},
+    ])
+    ml_table = pd.DataFrame([
+        {"game_id": "G1", "home_devigged_prob": 0.7},
+        {"game_id": "G2", "home_devigged_prob": 0.3},  # moneyline says away favoured
+    ])
+    frac, mismatches = awe.favorite_agreement(games, ml_table)
+    assert frac == 0.5
+    assert mismatches["game_id"].tolist() == ["G2"]
+
+
+def test_enforce_favorite_agreement_raises_below_floor():
+    games = pd.DataFrame([
+        {"game_id": f"G{i}", "favorite": "home"} for i in range(5)
+    ])
+    # Moneyline disagrees on 4 of 5 -> 20% agreement, well under the 80% floor.
+    ml_table = pd.DataFrame([
+        {"game_id": "G0", "home_devigged_prob": 0.7},
+        {"game_id": "G1", "home_devigged_prob": 0.2},
+        {"game_id": "G2", "home_devigged_prob": 0.2},
+        {"game_id": "G3", "home_devigged_prob": 0.2},
+        {"game_id": "G4", "home_devigged_prob": 0.2},
+    ])
+    with pytest.raises(SystemExit):
+        awe.enforce_favorite_agreement(games, ml_table, season=2026, week=1)
+
+
+def test_enforce_favorite_agreement_passes_above_floor():
+    games = pd.DataFrame([{"game_id": f"G{i}", "favorite": "home"} for i in range(5)])
+    ml_table = pd.DataFrame([{"game_id": f"G{i}", "home_devigged_prob": 0.7} for i in range(5)])
+    frac, mismatches = awe.enforce_favorite_agreement(games, ml_table, season=2026, week=1)
+    assert frac == 1.0
+    assert mismatches.empty
+
+
+# ── build_games_frame uses the CLOSING line (not pick-time) for favourite ───
+
+
+def test_build_games_frame_favorite_uses_closing_not_pick_time_spread():
+    """
+    ARI@LAC-shaped fixture: the line moved between pick time (+9.5, still
+    reading "home favoured" under this convention) and close (+8.5). Both
+    read the same favourite here, so this also exercises the case that would
+    catch a mix-up: pick_time_spread and closing_spread must be read from
+    different source columns, not silently collapsed into one.
+    """
+    exp_df = pd.DataFrame([_exp_row("2026_01_ARI_LAC", "home_ol_sack_rate", "home", "OL pass protection", "home", 0.5)])
+    live_df = pd.DataFrame([_live_row(
+        "2026_01_ARI_LAC", "home", home_team="LAC", away_team="ARI", pick_time_spread=9.5,
+    )])
+    results_df = pd.DataFrame([_results_row("2026_01_ARI_LAC", 14, 26, 8.5)])
+    resigned = awe.resign_toward_live_pick(exp_df, live_df)
+    games = awe.build_games_frame(live_df, resigned, results_df, known_mismatches=None)
+
+    row = games.iloc[0]
+    assert row["pick_time_spread"] == 9.5
+    assert row["closing_spread"] == 8.5
+    assert row["favorite"] == "home"  # LAC, matching the closing line's sign
+    assert bool(row["picked_is_favorite"]) is True
 
 
 # ── moneyline de-vig ──────────────────────────────────────────────────────────
