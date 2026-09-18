@@ -1,0 +1,17 @@
+game_id,home_team,away_team,home_spread_close,live_predicted_home_cover_prob,live_predicted_side,actual_home_covered,correct,explanation_predicted_side,explanation_predicted_home_cover_prob,is_approximate,clean_forward,reproduction_max_diff,side_mismatch,favorite,picked_is_favorite,near_key_number,market_disagreement,played,is_push
+2026_02_CAR_ATL,ATL,CAR,-1.5,0.4318518340587616,away,,,away,0.4318518340587616,False,True,0.0,False,home,False,,0.0681481659412384,False,False
+2026_02_CIN_HOU,HOU,CIN,3.0,0.39826053380966187,away,,,away,0.39826053380966187,False,True,0.0,False,away,True,3.0,0.10173946619033813,False,False
+2026_02_CLE_TB,TB,CLE,8.5,0.5379031300544739,home,,,home,0.5379031300544739,False,True,0.0,False,away,False,,0.03790313005447388,False,False
+2026_02_DET_BUF,BUF,DET,4.5,0.48903709650039673,away,,,away,0.48903709650039673,False,True,0.0,False,away,True,,0.010962903499603271,False,False
+2026_02_GB_NYJ,NYJ,GB,-4.5,0.4998665750026703,away,,,away,0.4998665750026703,False,True,0.0,False,home,False,,0.00013342499732971191,False,False
+2026_02_IND_KC,KC,IND,6.5,0.5599420070648193,home,,,home,0.5599420070648193,False,True,0.0,False,away,False,7.0,0.059942007064819336,False,False
+2026_02_JAX_DEN,DEN,JAX,2.5,0.5719376802444458,home,,,home,0.5719376802444458,False,True,0.0,False,away,False,3.0,0.0719376802444458,False,False
+2026_02_LV_LAC,LAC,LV,7.0,0.5922225713729858,home,,,home,0.5922225713729858,False,True,0.0,False,away,False,7.0,0.09222257137298584,False,False
+2026_02_MIA_SF,SF,MIA,13.5,0.5850040912628174,home,,,home,0.5850040912628174,False,True,0.0,False,away,False,,0.08500409126281738,False,False
+2026_02_MIN_CHI,CHI,MIN,5.5,0.7516061663627625,home,,,home,0.7516061663627625,False,True,0.0,False,away,False,,0.25160616636276245,False,False
+2026_02_NO_BAL,BAL,NO,8.5,0.5477858781814575,home,,,home,0.5477858781814575,False,True,0.0,False,away,False,,0.04778587818145752,False,False
+2026_02_NYG_LA,LA,NYG,7.0,0.5861870050430298,home,,,home,0.5861870050430298,False,True,0.0,False,away,False,7.0,0.08618700504302979,False,False
+2026_02_PHI_TEN,TEN,PHI,-7.0,0.5031769275665283,home,,,home,0.5031769275665283,False,True,0.0,False,home,True,7.0,0.0031769275665283203,False,False
+2026_02_PIT_NE,NE,PIT,5.5,0.5237709879875183,home,,,home,0.5237709879875183,False,True,0.0,False,away,False,,0.02377098798751831,False,False
+2026_02_SEA_ARI,ARI,SEA,-4.5,0.5540220141410828,home,,,home,0.5540220141410828,False,True,0.0,False,home,True,,0.054022014141082764,False,False
+2026_02_WAS_DAL,DAL,WAS,3.5,0.5202832818031311,home,,,home,0.5202832818031311,False,True,0.0,False,away,False,3.0,0.020283281803131104,False,False
