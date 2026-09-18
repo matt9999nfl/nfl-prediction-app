@@ -58,7 +58,8 @@ dataset.
 | Stage | What | Blocks | Status |
 |---|---|---|---|
 | B1-1 | Load the 14 staged sources to BigQuery | B1-3, all of bucket 2 | not started |
-| B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | prompt written |
+| B1-2a | Fix the `raw_lines` IAM grant, the unreadable-table crash, and the retry policy | B1-2 | prompt written |
+| B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **blocked on B1-2a** |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
 | B1-4 | Inactives capture at T-90min (store now, use later) | nothing, but has a clock | not started |
 | B1-5 | Multiple prediction runs per game, graded by decision time | — | not started |
@@ -109,7 +110,28 @@ against the coverage the filename claims** · `curated.*` and `raw_nflfastr.*` r
 unchanged · `DATA_SOURCES.md` has a status line per loaded source with the correct
 status · no model, feature builder or job definition changed.
 
+## B1-2a — Fix the IAM grant, the crash and the retry policy
+
+**Written: `PROMPT-FIX-PIPELINE-IAM-AND-RETRY.md`** (2026-09-19). Added after the
+2026-09-18 B1-2 attempt failed. `nfl-pipeline-sa` has no BigQuery grant on `raw_lines`;
+`validate_and_report.py` raises on the resulting 403 instead of failing the check; Cloud
+Run then retries the whole pipeline from step 1, four times, re-running the steps that drop
+and rebuild `raw_nflfastr.pbp`. Full diagnosis in `QUESTIONS.md` (2026-09-18).
+
+The IAM grant is Matt's to run. The prompt lands code and a recommendation only.
+
+**Follow-on, not yet scheduled: a concurrency guard.** The 2026-09-18 incident was caused
+by the retry loop, not by two jobs colliding — but it demonstrated the exposure. Two
+executions of a job whose first act is to drop its landing tables can run at once, and the
+Tuesday pair (full rebuild 11:00 UTC, production refresh 14:00 UTC) is the version that
+matters: a rebuild that overruns into the refresh gives picks built from a half-rebuilt
+`curated.plays`, with no crash and no alert. Fixing the retry policy shrinks the odds; it
+does not make mutual exclusion unnecessary. Raise this again once B1-2 has landed.
+
 ## B1-2 — Rebuild the data-pipeline image
+
+**Blocked on B1-2a.** Retrying the deploy before the crash-loop is fixed reproduces the
+2026-09-18 failure exactly, because the defect is deterministic.
 
 **Already written: `PROMPT-DEPLOY-DATA-PIPELINE.md`.** Do not rewrite it.
 

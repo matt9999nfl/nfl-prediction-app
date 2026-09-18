@@ -40,6 +40,38 @@ def is_in_progress_season(label: str) -> bool:
     return f"_{token}_" in label or label.endswith(f"_{token}")
 
 
+def fetch_line_snapshot_status(client, now: datetime | None = None) -> tuple[bool, str, str | None]:
+    """
+    Query raw_lines.line_snapshots and evaluate freshness for the validation
+    report. Never raises: an unreadable table (missing IAM grant, dropped
+    dataset, wrong project -- see QUESTIONS.md 2026-09-18) is a FAILED check
+    with the query error attached, not a crashed report. Before this, the
+    query itself raised straight out of main(), which killed the whole
+    pipeline process and, because Cloud Run auto-retries a failed container,
+    turned one unreadable table into four full pipeline reruns.
+
+    Returns (ok, summary, query_error):
+      ok           -- whether this check should count as a PASS
+      summary      -- one-line description for the report row
+      query_error  -- the exception text if the query itself failed, else None
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    try:
+        snap_freshness = run_query(client, f"""
+            SELECT COUNT(*) AS n_rows, MAX(captured_at) AS latest
+            FROM `{PROJECT}.raw_lines.line_snapshots`
+        """)
+    except Exception as exc:
+        return False, "query failed", str(exc)
+
+    sf = snap_freshness.iloc[0]
+    n_rows = int(sf["n_rows"])
+    latest = sf["latest"]
+    ok, age_txt = evaluate_line_snapshot_freshness(n_rows, latest, now)
+    return ok, f"{n_rows:,} row(s) total, latest capture {age_txt}", None
+
+
 def check(condition: bool, label: str, results: list) -> bool:
     """
     Record a check. Returns whether it should count toward pass/fail.
@@ -319,20 +351,23 @@ failure never blocks PBP/rosters ingest. Non-fatal previously also meant
 invisible: the failure (or the deployed image simply not containing this
 code) was only ever a line in Cloud Logging, never in this report or the
 run's exit code -- the same silent-failure-only-logs-can-find pattern as
-HC-S6-F6. This check makes a stale or empty snapshot table fail the run
-visibly.
+HC-S6-F6. This check makes a stale, empty, or **unreadable** (e.g. a
+missing IAM grant on `raw_lines` -- see QUESTIONS.md 2026-09-18) snapshot
+table fail the run visibly, in the report, instead of crashing the process.
 """)
-    snap_freshness = run_query(client, f"""
-        SELECT COUNT(*) AS n_rows, MAX(captured_at) AS latest
-        FROM `{PROJECT}.raw_lines.line_snapshots`
-    """)
-    sf = snap_freshness.iloc[0]
-    n_rows = int(sf["n_rows"])
-    latest = sf["latest"]
-    snap_ok, age_txt = evaluate_line_snapshot_freshness(n_rows, latest, datetime.now(timezone.utc))
+    snap_ok, snap_summary, snap_error = fetch_line_snapshot_status(client)
     all_pass &= check(snap_ok, "line_snapshots_freshness", check_results)
-    row(f"- `line_snapshots`: {n_rows:,} row(s) total, latest capture {age_txt}  {'✅' if snap_ok else '❌'}")
-    if not snap_ok:
+    row(f"- `line_snapshots`: {snap_summary}  {'✅' if snap_ok else '❌'}")
+    if snap_error:
+        row(
+            f"\n  **ERROR:** could not query `{PROJECT}.raw_lines.line_snapshots`: {snap_error}\n"
+            "  This looks like an access problem (for example a missing BigQuery IAM grant "
+            "for the pipeline's service account on the `raw_lines` dataset -- see "
+            "QUESTIONS.md, 2026-09-18 entry) rather than a genuinely stale table. Fix the "
+            "underlying access/table issue and re-run; do not treat this the same as a "
+            "merely-stale snapshot below."
+        )
+    elif not snap_ok:
         row(
             f"\n  **ERROR:** no line snapshot has been captured in the last "
             f"{LINE_SNAPSHOT_MAX_AGE_DAYS} days (or the table is empty). The "
