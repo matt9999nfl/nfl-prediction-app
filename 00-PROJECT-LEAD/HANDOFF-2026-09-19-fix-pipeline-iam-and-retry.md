@@ -35,37 +35,34 @@ Commit(s) — not yet made at time of writing this file; see "Commit" note at th
 
 **Test count: 16 → 23** (`python -m pytest scripts/` from `01-DATA-PIPELINE`, all pass).
 
-## (a) IAM grant — Matt's call, not run by this session
+## (a) IAM grant — DONE 2026-09-19, applied by Matt's explicit instruction
 
-`nfl-pipeline-sa@nfl-model-471509.iam.gserviceaccount.com` has an explicit dataset-level
-grant on `raw_nflfastr` and `curated` (`WRITER`, confirmed via `bq show`), but none at all
-on `raw_lines` — created 2026-09-09 with only Matt's personal account as owner. At the
-project level the service account has only `roles/bigquery.jobUser` and `roles/run.developer`,
-neither of which covers dataset data access, so there is no fallback grant either.
-
-Run this from anywhere with `gcloud`/`bq` authenticated against `nfl-model-471509`
-(cmd.exe, one line):
+Applied via DCL rather than the `bq add-iam-policy-binding` command originally proposed
+below (Matt's correction: Google's docs say the `bq show`-to-JSON-file / `bq update
+--source` route *overwrites* the whole access list rather than merging, which would have
+been how you remove your own access while trying to add someone else's; DCL `GRANT` is the
+additive-safe path). Command actually run:
 
 ```
-bq add-iam-policy-binding --member=serviceAccount:nfl-pipeline-sa@nfl-model-471509.iam.gserviceaccount.com --role=roles/bigquery.dataEditor nfl-model-471509:raw_lines
+bq query --use_legacy_sql=false "GRANT \`roles/bigquery.dataEditor\` ON SCHEMA \`nfl-model-471509.raw_lines\` TO \"serviceAccount:nfl-pipeline-sa@nfl-model-471509.iam.gserviceaccount.com\""
 ```
 
-**What it grants:** BigQuery Data Editor on the `raw_lines` dataset only — create/read/
-update tables and rows inside that one dataset. Matches, does not exceed, what the same
-service account already has on `raw_nflfastr`/`curated`. Nothing project-wide, no other
-dataset touched, no admin/owner right granted.
+Verified immediately after: `bq show --format=prettyjson nfl-model-471509:raw_lines` now
+lists `{"role": "WRITER", "userByEmail": "nfl-pipeline-sa@nfl-model-471509.iam.gserviceaccount.com"}`
+alongside every pre-existing entry, unchanged — `matt.lilley4@gmail.com`'s `OWNER` binding,
+`projectWriters`/`projectOwners`/`projectReaders`. Nothing was removed. Matches the
+`WRITER` grant `nfl-pipeline-sa` already holds on `raw_nflfastr` (confirmed identical via
+`bq show` on both datasets before granting, per Matt's instruction to check first).
 
-**Verify it landed:**
+**Superseded proposal, kept for the record only:** `bq add-iam-policy-binding
+--member=serviceAccount:nfl-pipeline-sa@nfl-model-471509.iam.gserviceaccount.com
+--role=roles/bigquery.dataEditor nfl-model-471509:raw_lines` — this was the original
+write-up's suggested command. Not run. Matt flagged that the closely-related `bq show`
+JSON-export → `bq update --source` pattern (a different but adjacent route to the same
+goal) overwrites the whole access list rather than merging, and asked for the additive-safe
+DCL `GRANT` form instead, run above.
 
-```
-bq show --format=prettyjson nfl-model-471509:raw_lines
-```
-
-Stop condition: look for `nfl-pipeline-sa@nfl-model-471509.iam.gserviceaccount.com` in the
-output's `access` list. If it's not there, the grant didn't take — don't proceed to a B1-2
-retry.
-
-## (c) Cloud Run retry policy — reported, not changed
+## (c) Cloud Run retry policy — reported, decision deferred to the quiet window
 
 Current setting, read via `gcloud run jobs describe` (no job modified):
 
@@ -93,19 +90,22 @@ burden: `01-DATA-PIPELINE/instructions.md` already documents the manual recovery
 (`gcloud run jobs execute nfl-pipeline-full --region us-central1 --wait`) as the expected
 path for a missed ingest. The alternative, `--max-retries=1`, halves the worst case (2 full
 rebuilds instead of 4) while still giving one automatic retry for genuine transients — a
-middle ground if zero feels too strict. Not applying either; this is your call.
+middle ground if zero feels too strict. Not applying either now — per Matt, this is a
+job-spec change, the same class as a digest repoint, so it waits for a quiet window (not
+before Mon 05:00 UTC), same as the B1-2 retry itself.
 
 ## What remains before B1-2 can retry
 
-1. Matt runs the IAM grant above (or decides against `bq add-iam-policy-binding` in favour
-   of something else — the point is the grant, not this specific command).
-2. Matt decides the retry-policy number (0, 1, or leave at 3) and someone applies it.
-3. Only then does `PROMPT-DEPLOY-DATA-PIPELINE.md` (B1-2) retry — per
-   `PLAN-BUCKET1-DATA-COVERAGE.md`, B1-2 is now explicitly blocked on B1-2a.
+1. ~~Matt runs the IAM grant~~ — **done 2026-09-19**, see (a) above.
+2. In the Monday quiet window: apply the retry-policy decision (0, 1, or leave at 3), then
+   retry B1-2 (`PROMPT-DEPLOY-DATA-PIPELINE.md`) — per `PLAN-BUCKET1-DATA-COVERAGE.md`, B1-2
+   is blocked on B1-2a, which is now unblocked on the IAM side; the retry-policy piece is the
+   one still gating it, deliberately, until the quiet window.
 
-Nothing was built, repointed, executed, or IAM-changed by this session. `VALIDATION_REPORT.md`
-was not regenerated against production (no BigQuery calls made outside the unit tests'
-stubbed client).
+`01-DATA-PIPELINE/scripts/validate_and_report.py`'s code fix (this session) and the IAM
+grant (this session, on Matt's explicit go-ahead) are both live. No Cloud Run job was
+built, repointed, executed, or reconfigured. `VALIDATION_REPORT.md` was not regenerated
+against production.
 
 ## Commit
 
