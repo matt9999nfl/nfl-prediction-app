@@ -1,0 +1,105 @@
+name: Python Tests
+
+# PROMPT-PYTHON-TESTS-IN-CI.md (2026-09-19). Separate from api-deploy.yml,
+# frontend-deploy.yml and pipeline-deploy.yml on purpose: a test failure here
+# must never be tangled with -- or block -- a deploy, and a deploy must never
+# be gated on infrastructure this workflow doesn't have (no GCP credentials
+# are granted here at all; see the note on the backend-api job below for why
+# that's a real constraint, not just caution).
+#
+# Runs on every push and pull request, no path filter -- unlike the deploy
+# workflows, a Python change anywhere in the repo should run its tests.
+#
+# Four independent jobs, one per component, each with its own dependency set:
+# 01-DATA-PIPELINE pins pandas==1.5.3 / numpy==1.26.4 (deliberately, see its
+# requirements.txt), 02-MODELING pins the same versions for reproducibility,
+# and 03-BACKEND-API's pyproject.toml wants pandas>=2.0.0 -- installing all
+# of that into one job's environment would let one component's resolver
+# silently downgrade or upgrade another's pins. Separate jobs mean separate,
+# untangled environments, and separate green/red checks in the PR UI.
+on:
+  push:
+  pull_request:
+
+jobs:
+  data-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r 01-DATA-PIPELINE/requirements.txt pytest
+      # Every test here stubs google.cloud.bigquery before import (see
+      # 01-DATA-PIPELINE/scripts/test_snapshot_lines.py's
+      # _install_bigquery_stub() pattern) -- none of them touch a real
+      # client, so nothing here needs credentials or network.
+      - run: python -m pytest 01-DATA-PIPELINE/scripts -q
+
+  modeling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r 02-MODELING/requirements.txt pytest
+      # Confirmed credential-free 2026-09-19: all 251 tests pass with no
+      # GOOGLE_APPLICATION_CREDENTIALS and no reachable ADC file.
+      - run: python -m pytest 02-MODELING -q
+
+  backend-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e ".[dev]"
+        working-directory: 03-BACKEND-API
+      # Explicit file list, not `tests/` with a marker exclusion, because six
+      # files (test_auth.py aside) have pre-existing failures unrelated to
+      # credentials that this prompt's scope does not permit fixing (would
+      # need an assertion or production-code change) -- see QUESTIONS.md,
+      # 2026-09-19. Listed here rather than silently skipped so the excluded
+      # set is visible in this file, not just in a doc. test_auth.py is
+      # excluded by its own `needs_credentials` mark instead (a duplicate of
+      # the exact bug fixed in tests/conftest.py, not yet fixed in that
+      # file's own local fixture -- same doc).
+      #
+      # Excluded pending a decision (152 tests, 6 files): test_datasets.py,
+      # test_experiments.py, test_experiments_write.py, test_frameworks.py,
+      # test_games.py, test_predictions.py.
+      - run: |
+          python -m pytest -q -m "not needs_credentials" \
+            tests/test_health.py \
+            tests/test_predictions_production.py \
+            tests/test_infer_schema.py \
+            tests/test_predictions_explanation.py \
+            tests/test_teams.py \
+            tests/test_scoping_api.py \
+            tests/test_scoping_core.py \
+            tests/test_scoping_degradation.py \
+            tests/test_scoping_extract.py \
+            tests/test_scoping_folds.py \
+            tests/test_scoping_governor.py \
+            tests/test_scoping_guarantee.py \
+            tests/test_scoping_hash_roundtrip.py \
+            tests/test_scoping_storage_contract.py \
+            tests/test_scoping_tree.py
+        working-directory: 03-BACKEND-API
+
+  testing-qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pytest
+      # integration (touches BigQuery), live (needs a deployed API_BASE_URL)
+      # and nightly (full backtest replay) are excluded by marker, not by
+      # file -- registered in the root pytest.ini. What's left
+      # (scoping_hc/test_hc_credential_boundary.py) is pure AST inspection of
+      # this repo's own source, no BigQuery/network/backend install needed.
+      - run: python -m pytest 06-TESTING-QA -q -m "not integration and not live and not nightly"

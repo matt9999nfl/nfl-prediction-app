@@ -63,7 +63,7 @@ dataset.
 | B1-2c | Harden `pipeline-deploy.yml` — timeout, revert-on-cancel, window buffer, `.dockerignore` | first dispatch | **done 2026-09-19** (`d4329fd`) |
 | B1-2d | Narrow `terraform-ci` and scope the WIF binding | — | not started |
 | B1-2e | Terraform image ownership — make `terraform apply` safe (DP-R-13) | safe ops | **done 2026-09-19** (`69436f5`, plan-verified, not applied) |
-| B1-7 | Python tests in CI — no Python test has ever run in CI | trust in every handoff | prompt written |
+| B1-7 | Python tests in CI — no Python test has ever run in CI | trust in every handoff | **done 2026-09-19** (581/814 enforced — see QUESTIONS.md for the rest) |
 | B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **ready — one dispatch** |
 | B1-3c | **Start capturing** injury + depth-chart snapshots daily (clock, no features) | B1-3 | **done 2026-09-19** (`c7b5ead`, code+Terraform — not yet deployed) |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
@@ -220,6 +220,35 @@ service would have a `traffic` block removed (0%, tagged "candidate", not declar
 (2026-09-19) for Matt rather than decided unilaterally. `terraform apply` is not yet safe
 to run completely unattended until that's resolved and until Matt is ready to actually
 deploy the injury-capture resources it would also create.
+
+## B1-7 — Python tests in CI
+
+**Written: `PROMPT-PYTHON-TESTS-IN-CI.md`** (2026-09-19). Added `pytest.ini` at the repo
+root (fixes `01-DATA-PIPELINE/scripts/test_snapshot_lines.py` failing to import when run
+from the repo root, plus registers `integration`/`live`/`nightly`/`needs_credentials`) and
+`.github/workflows/python-tests.yml` — four independent jobs (data-pipeline, modeling,
+backend-api, testing-qa), no path filter, no GCP credentials granted.
+
+The real finding: running backend-api's suite with no GCP credentials reachable produced
+160+ failures, not the documented 29 — root cause was `tests/conftest.py`'s `client`
+fixture overriding the wrong dependency (`get_client` instead of `get_bq_client`, the one
+every router actually uses), silently masked because every machine this ever ran on
+already had ambient credentials. Fixed in scope (a conftest.py fix); that alone took the
+number down to 25, all confirmed unrelated to credentials (stale mock targets, kwarg vs
+positional call mismatches, a changed error message) — none fixed, since doing so would
+touch an assertion or production code, both out of scope. Also caught and fixed a
+same-session regression: B1-3c's new `raw_roster_snapshots` freshness query broke
+`test_validate_and_report.py`'s stub client, unnoticed because that file was never
+re-run after the edit — exactly the "a test that doesn't run is indistinguishable from
+one that passes" problem this whole stage exists to close.
+
+**Enforced in CI: 581 of 814 tests.** Excluded: `test_auth.py` (5, marked
+`needs_credentials` — a duplicate of the same conftest bug, in a file's own local fixture,
+not fixed since that's not a conftest.py); six backend-api files (147 tests, pre-existing
+failures unrelated to credentials, excluded by file rather than fixed or hidden with a new
+marker); `06-TESTING-QA`'s `integration`/`live`/`nightly`-marked tests (pre-existing
+convention, unchanged). Open question for Matt in `QUESTIONS.md`: fix the 25 real failures,
+or mark them individually so the other 122 tests in those six files can be enforced too.
 
 ## B1-3c — Start capturing injury + depth-chart snapshots
 

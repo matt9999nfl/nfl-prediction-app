@@ -19,6 +19,19 @@ from app.bigquery_client import get_client
 from app.config import settings
 from app.main import app
 
+# needs_credentials: this file's own `client_with_auth` fixture below overrides
+# only `get_client`, not `get_bq_client` -- the wrapper every router actually
+# depends on (app/dependencies.py). That means the override never takes
+# effect, and each POST here falls through to a real, unmocked
+# `bigquery.Client()`, which succeeds silently on a machine with ambient GCP
+# credentials and hangs/fails without them. This is the exact bug fixed in
+# tests/conftest.py's shared `client` fixture (PROMPT-PYTHON-TESTS-IN-CI.md,
+# 2026-09-19) -- duplicated here rather than shared. The one-line fix is the
+# same (also override get_bq_client), but editing a test file's own fixture
+# logic is outside this prompt's scope (conftest.py only); marked here so CI
+# excludes it rather than hangs on it. See QUESTIONS.md, 2026-09-19.
+pytestmark = pytest.mark.needs_credentials
+
 
 @pytest.fixture
 def mock_bq_for_auth():

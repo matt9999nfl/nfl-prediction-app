@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.bigquery_client import get_client
+from app.dependencies import get_bq_client
 from app.main import app
 
 
@@ -24,8 +25,22 @@ def client(mock_bq):
     """
     A Starlette TestClient with the real BigQuery client replaced by mock_bq.
     Dependency-override is cleared after each test.
+
+    Every router's routes actually depend on `get_bq_client` (app/
+    dependencies.py), a plain wrapper that calls `get_client()` directly
+    rather than through FastAPI's own dependency graph -- so overriding only
+    `get_client` (as this fixture did until 2026-09-19) never takes effect
+    for any of them. That went unnoticed because every machine this was ever
+    run on already had ambient GCP credentials, so the un-overridden call
+    just quietly succeeded for real instead of failing loudly -- found while
+    building python-tests-in-ci.yml, the first time this suite ever ran
+    somewhere without credentials (PROMPT-PYTHON-TESTS-IN-CI.md). Some
+    scoping tests already override `get_bq_client` themselves for this exact
+    reason (test_scoping_api.py); this makes it the shared default so every
+    other test doesn't have to.
     """
     app.dependency_overrides[get_client] = lambda: mock_bq
+    app.dependency_overrides[get_bq_client] = lambda: mock_bq
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
     app.dependency_overrides.clear()

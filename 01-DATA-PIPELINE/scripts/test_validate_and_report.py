@@ -149,6 +149,16 @@ class _RoutingJob:
             latest = datetime.now(timezone.utc) - timedelta(days=age)
             return pd.DataFrame([{"n_rows": c._n_rows, "latest": latest}])
 
+        if "raw_roster_snapshots." in sql:
+            # Section 3d (PROMPT-CAPTURE-INJURY-SNAPSHOTS.md, added 2026-09-19)
+            # queries these two tables the same way -- COUNT(*)/MAX(captured_at),
+            # unpacked via .iloc[0], which needs exactly one row back even from
+            # a stub. These tests are about section 3c (line snapshots) only,
+            # so always answer "fresh" here regardless of `c._mode` -- otherwise
+            # every section-3c scenario would also have to reason about 3d.
+            latest = datetime.now(timezone.utc) - timedelta(hours=1)
+            return pd.DataFrame([{"n_rows": 10, "latest": latest}])
+
         if "qb_hit_nulls" in sql:
             return pd.DataFrame([{"qb_hit_nulls": 0, "sack_nulls": 0, "total": 100}])
         if "orphan_plays" in sql:

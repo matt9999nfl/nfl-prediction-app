@@ -192,3 +192,58 @@ routing entry that might still be in use.
 
 No `apply` run. `05-DEVOPS/infra/terraform/{iam,jobs,scheduler,cloud_run}.tf` changes and
 the full plan output are in `00-PROJECT-LEAD/HANDOFF-2026-09-19-terraform-image-ownership.md`.
+
+## 2026-09-19 — python-tests-in-ci (PROMPT-PYTHON-TESTS-IN-CI.md) — OPEN
+
+Question: 25 backend-api tests across 6 files fail for reasons that have nothing to do with
+credentials — pre-existing bugs, unrelated to each other, that the prompt's scope does not
+let me fix (would need an assertion or production-code change). They're currently excluded
+from the new CI workflow **by file**, not individually, which also excludes 127 tests in
+those same files that already pass. Fix the 25 bugs, or should I mark just those 25 with a
+new, honestly-named marker (not `needs_credentials` — that would misdescribe them) so the
+other 127 can be enforced too?
+
+What I was doing: building `.github/workflows/python-tests.yml`. First real finding: running
+the whole backend-api suite (441 tests) with no GCP credentials reachable produced **160+
+failures**, not the "known 29" the prompt names — real root cause found and fixed in scope
+(`tests/conftest.py`'s `client` fixture overrode `app.bigquery_client.get_client`, but every
+router actually depends on `app.dependencies.get_bq_client`, a wrapper that calls
+`get_client()` directly rather than through FastAPI's DI graph, so the override never took
+effect for any of them — silently masked because every machine this ever ran on already had
+ambient GCP credentials; some scoping tests already override `get_bq_client` correctly
+themselves, which is how I found the mismatch). Fixing that one line in the shared fixture
+took the failure count from 160+ down to 25, plus a separate, already-understood case:
+`tests/test_auth.py` has its own **local** copy of the same now-fixed fixture pattern,
+still only overriding `get_client` — same root cause, just duplicated in a file rather than
+shared. Marked its 5 tests `needs_credentials` (in scope: a marker on a test that currently
+needs credentials to avoid hanging) rather than fixing its local fixture (out of scope: not
+a conftest.py).
+
+The remaining 25, by file, none of them credential-related:
+- `test_datasets.py` (5 of 38 fail): e.g. `test_happy_path_updates_status_to_mapping` —
+  `update_dataset_after_processing` is asserted called with positional args
+  (`mock_update.assert_called_once_with(mock_bq, "ds-001", "mapping", 1, 2)`) but the code
+  calls it with keyword args (`status=..., row_count=..., column_count=...`).
+- `test_experiments.py` (9 of 33 fail): e.g. `test_list_experiments_shape` — `KeyError:
+  'data'`; several others assert `200` and get `500`.
+- `test_experiments_write.py` (5 of 23 fail): e.g. `TestTriggerRun::test_happy_path_
+  returns_202_with_run_id` — `AttributeError: module 'app.queries.experiments' does not
+  have the attribute 'trigger_experiment_runner_stub'` (test patches a name that no longer
+  exists in that module).
+- `test_frameworks.py` (4 of 25 fail): e.g. `test_from_base_experiment_id_returns_201` —
+  `pydantic_core.ValidationError: 4 validation errors for ExperimentConfig`.
+- `test_games.py` (1 of 15 fails): `test_list_games_empty` — asserts `200`, gets `422`.
+- `test_predictions.py` (1 of 13 fails): `test_get_predictions_no_gate_passed` — asserts
+  `'No gate-passed experiment' in ...`, actual message is `'No production experiment
+  available'`.
+
+What I tried: nothing — per the kill-switch ("stop if getting the suite green would need a
+change to production code or to an assertion"), I didn't touch any of these 25, and I didn't
+invent a new marker to hide them either, since the allowed list is specifically "marker/skip
+decorators on tests that need credentials" and these don't. `.github/workflows/python-tests.yml`
+excludes the 6 files by an explicit path list (visible in the workflow file itself, not a
+silent skip), with a comment pointing here.
+
+Current CI-enforced total either way: 581 of 814 tests across the repo (01-DATA-PIPELINE 34,
+02-MODELING 251, backend-api 288 clean + 1 pre-existing skip, 06-TESTING-QA 6 + 1 pre-existing
+skip). Marking the 25 individually instead of excluding by file would raise that to 706.
