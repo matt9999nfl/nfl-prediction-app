@@ -233,20 +233,26 @@ resource "google_project_iam_member" "terraform_ci_security_admin" {
 # write the command, don't run it). Matt applies this, same as every other
 # IAM change in this repo (05-DEVOPS/instructions.md rule 6).
 #
-# CAUTION before running `terraform apply` for this: Terraform has already
-# drifted from live on the *existing* jobs (this file and jobs.tf still
-# declare `:latest`/stale timeout+memory for resources that have since been
-# pinned to specific digests outside Terraform -- STATE.md, DP-R-13,
-# unfixed). A blanket `apply` right now would revert those digest pins as a
-# side effect of adding this SA. Apply only the new resources below by name
-# (`terraform apply -target=google_service_account.injury_capture
+# DP-R-13 (the reason a blanket `apply` used to also revert every job's
+# digest pin) is fixed -- see the `lifecycle { ignore_changes = [...] }`
+# block on each job/service's image attribute in jobs.tf/cloud_run.tf
+# (PROMPT-TERRAFORM-IMAGE-OWNERSHIP.md). A blanket `apply` no longer moves
+# any image. It would still, however, actually create these seven
+# injury-capture resources -- which is exactly what this stage is NOT meant
+# to do yet -- so apply only these by name until Matt is ready to deploy it:
+# `terraform apply -target=google_service_account.injury_capture
 # -target=google_bigquery_dataset_iam_member.injury_capture_editor_roster_snapshots
 # -target=google_project_iam_member.injury_capture_job_user
 # -target=google_bigquery_dataset_iam_member.pipeline_reader_roster_snapshots
 # -target=google_cloud_run_v2_job.injury_capture
 # -target=google_cloud_run_v2_job_iam_member.injury_capture_invoke_self
-# -target=google_cloud_scheduler_job.injury_capture_daily`), or fix DP-R-13
-# first and reconcile the rest of the drift in the same sitting.
+# -target=google_cloud_scheduler_job.injury_capture_daily`
+#
+# Separately, `terraform plan` (2026-09-19) also shows an unrelated pending
+# removal on `google_cloud_run_service.api`: a `traffic` block routing 0% to
+# a revision tagged "candidate", not declared anywhere in cloud_run.tf. Not
+# reconciled here -- out of scope for both this stage and the image-ownership
+# one, and named for Matt in QUESTIONS.md rather than resolved unilaterally.
 
 # Write access to the new capture tables.
 resource "google_bigquery_dataset_iam_member" "injury_capture_editor_roster_snapshots" {

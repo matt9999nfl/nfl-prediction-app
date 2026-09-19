@@ -153,3 +153,42 @@ c. **Set a sane Cloud Run retry policy on both pipeline jobs.** Right now a sing
 (a) needs your credentials/go-ahead. (b) and (c) are code/config changes, also out of scope for the deploy-only prompt this ran under — flagging rather than doing either unilaterally.
 
 Given this is now mechanistically explained, Mon 05:00 UTC's run on the **old** digest (which contains none of this code) is expected to simply succeed normally. Recording its duration anyway as free confirmation, but it's no longer the open question.
+
+## 2026-09-19 — terraform-image-ownership (PROMPT-TERRAFORM-IMAGE-OWNERSHIP.md) — OPEN
+
+Question: a real `terraform plan` (no `-target`, run against live state with your own
+already-authenticated gcloud credentials, per the prompt's own instruction to verify this
+way rather than by reading the docs) shows one destructive change unrelated to image
+ownership: `google_cloud_run_service.api` would have a `traffic` block **removed** —
+`percent = 0`, `tag = "candidate"`, `revision_name = "nfl-backend-api-00048-mif"`. That
+0%-traffic, "candidate"-tagged revision exists live but isn't declared anywhere in
+`cloud_run.tf`, which only declares the `percent = 100, latest_revision = true` block.
+Should this be reconciled, and if so how — declare the missing `traffic` block (its
+`revision_name` will just drift again on the next deploy, since revision names are
+generated per-deploy, not stable config), or extend the same
+`lifecycle { ignore_changes = [...] }` treatment this stage just gave `image` to cover
+`traffic` too (on the theory that CI/manual `gcloud` — not Terraform — owns traffic
+splits during a deploy, the same argument this stage just made for images)?
+
+What I was doing: `PROMPT-TERRAFORM-IMAGE-OWNERSHIP.md` — adding
+`lifecycle { ignore_changes = [...] }` on the image attribute of all seven Cloud Run
+jobs/services so `terraform apply` stops reverting digest pins (DP-R-13). Confirmed with
+a real plan: zero image-attribute changes remain, 0 resources destroyed, and this
+`traffic` block is the only non-image, non-cosmetic diff left (the four `google_cloud_
+run_v2_job` resources and this service also show `client`/`client_version`/annotation
+fields nulling out — Google-populated provenance metadata from the last `gcloud` command
+that touched each, cosmetic, not a destroy or replacement, not flagged as a concern).
+
+What I tried: didn't touch it. The prompt's own kill-switch says stop and ask if a plan
+shows "a destructive change to anything other than an image attribute" — this qualifies,
+and deciding which of the two fixes above is right means deciding whether Terraform or
+CI owns traffic splits going forward, which is the same class of architectural call this
+whole stage exists to get right, not something to guess at unilaterally. `05-DEVOPS/
+instructions.md` rule 3 already documents a related known bug — `api-deploy.yml` shifts
+traffic to `LATEST` rather than the smoke-tested revision — so this stale "candidate" tag
+may be a leftover artifact of that same unfixed flow rather than anything currently load
+-bearing, but I haven't verified that and didn't want to assume it and delete a live
+routing entry that might still be in use.
+
+No `apply` run. `05-DEVOPS/infra/terraform/{iam,jobs,scheduler,cloud_run}.tf` changes and
+the full plan output are in `00-PROJECT-LEAD/HANDOFF-2026-09-19-terraform-image-ownership.md`.

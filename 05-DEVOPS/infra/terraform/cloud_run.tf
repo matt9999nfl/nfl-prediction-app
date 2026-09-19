@@ -68,6 +68,10 @@ resource "google_cloud_run_service" "api" {
     latest_revision = true
   }
 
+  lifecycle {
+    ignore_changes = [template[0].spec[0].containers[0].image]
+  }
+
   depends_on = [google_secret_manager_secret.anthropic_api_key, google_secret_manager_secret.owner_api_key]
 }
 

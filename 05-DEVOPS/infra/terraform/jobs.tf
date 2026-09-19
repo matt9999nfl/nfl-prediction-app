@@ -49,6 +49,10 @@ resource "google_cloud_run_v2_job" "dataset_processor" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
+
   depends_on = [google_service_account.dataset_processor]
 }
 
@@ -83,6 +87,10 @@ resource "google_cloud_run_v2_job" "experiment_runner" {
         }
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
   }
 
   depends_on = [google_service_account.runner]
@@ -126,6 +134,10 @@ resource "google_cloud_run_v2_job" "pipeline_full" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
+
   depends_on = [google_service_account.pipeline]
 }
 
@@ -165,6 +177,10 @@ resource "google_cloud_run_v2_job" "pipeline_gameday" {
         }
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
   }
 
   depends_on = [google_service_account.pipeline]
@@ -231,6 +247,10 @@ resource "google_cloud_run_v2_job" "injury_capture" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
+
   depends_on = [google_service_account.injury_capture]
 }
 
@@ -278,6 +298,10 @@ resource "google_cloud_run_v2_job" "production_refresh" {
         }
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
   }
 
   depends_on = [google_service_account.runner]

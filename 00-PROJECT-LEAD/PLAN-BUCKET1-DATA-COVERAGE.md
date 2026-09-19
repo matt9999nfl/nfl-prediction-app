@@ -62,6 +62,8 @@ dataset.
 | B1-2b | Move the pipeline deploy into GitHub Actions (WIF already exists) | — | landed `dcf7c8a`/`91ab923` |
 | B1-2c | Harden `pipeline-deploy.yml` — timeout, revert-on-cancel, window buffer, `.dockerignore` | first dispatch | **done 2026-09-19** (`d4329fd`) |
 | B1-2d | Narrow `terraform-ci` and scope the WIF binding | — | not started |
+| B1-2e | Terraform image ownership — make `terraform apply` safe (DP-R-13) | safe ops | **done 2026-09-19** (plan-verified, not applied) |
+| B1-7 | Python tests in CI — no Python test has ever run in CI | trust in every handoff | prompt written |
 | B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **ready — one dispatch** |
 | B1-3c | **Start capturing** injury + depth-chart snapshots daily (clock, no features) | B1-3 | **done 2026-09-19** (`c7b5ead`, code+Terraform — not yet deployed) |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
@@ -195,6 +197,29 @@ Note for whoever picks it up: `snapshot_lines.py` is honest that nflverse publis
 `spread_line` and no opening line, and that the earliest the pipeline looks is Tue 11:00
 UTC — hence `home_spread_first_seen`, not `home_spread_open`. Real intra-week movement
 needs a timestamped odds feed, which is the Matt decision listed under B1-3.
+
+## B1-2e — Terraform image ownership (DP-R-13)
+
+**Written: `PROMPT-TERRAFORM-IMAGE-OWNERSHIP.md`** (2026-09-19). Every job/service
+declared `:latest` with no `lifecycle` block, so a blanket `terraform apply` would have
+reverted the digest pins on four Cloud Run jobs and the API service in one command —
+`iam.tf` was managing this with a hand-maintained `-target` list, a landmine, not a fix.
+
+Added `lifecycle { ignore_changes = [...] }` on the image attribute of all seven
+resources — `template[0].template[0].containers[0].image` for the `google_cloud_run_v2_job`
+resources, `template[0].spec[0].containers[0].image` for the `google_cloud_run_service`
+API service (confirmed by an actual `terraform plan` against live state, not by reading
+the docs — the two resource types nest differently). Verified: `terraform plan` with no
+`-target` now shows **zero image-attribute changes** on any of the seven resources, and
+**0 resources destroyed**. The refresh job's timeout/memory, the other named DP-R-13
+drift, already matched Terraform's declared values live — nothing to reconcile there.
+
+One unrelated destructive diff surfaced by the same plan, not resolved here: the API
+service would have a `traffic` block removed (0%, tagged "candidate", not declared in
+`cloud_run.tf`). Per the prompt's kill-switch, this is written up in `QUESTIONS.md`
+(2026-09-19) for Matt rather than decided unilaterally. `terraform apply` is not yet safe
+to run completely unattended until that's resolved and until Matt is ready to actually
+deploy the injury-capture resources it would also create.
 
 ## B1-3c — Start capturing injury + depth-chart snapshots
 
