@@ -135,11 +135,18 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "New digest: $digest"
 
-      - name: Repoint both jobs to the new digest
+      # --max-retries=0 rides along with the digest repoint (B1-2a, QUESTIONS.md
+      # 2026-09-18/19): a pipeline whose first act is to drop its own landing tables
+      # must not auto-retry a failed execution, which is what turned one missing
+      # IAM grant into four full destructive rebuild cycles per execution. This is
+      # the last manual gcloud step B1-2a left queued for the attended window --
+      # folding it in here means every future digest repoint (this workflow, going
+      # forward) keeps the setting instead of it needing to be reapplied by hand.
+      - name: Repoint both jobs to the new digest (and pin max-retries=0)
         run: |
           image="gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
-          gcloud run jobs update "$JOB_FULL" --region="$REGION" --image="$image"
-          gcloud run jobs update "$JOB_GAMEDAY" --region="$REGION" --image="$image"
+          gcloud run jobs update "$JOB_FULL" --region="$REGION" --image="$image" --max-retries=0
+          gcloud run jobs update "$JOB_GAMEDAY" --region="$REGION" --image="$image" --max-retries=0
 
       - name: Row counts before verification run
         id: before
@@ -185,10 +192,13 @@ jobs:
         if: steps.verify.outcome == 'failure'
         run: |
           echo "::error::Verification run failed -- reverting both jobs to their previous digest."
+          # max-retries=0 stays regardless of which digest ends up deployed -- the
+          # old image is also a DROP-and-rebuild pipeline, so it shouldn't auto-retry
+          # either.
           gcloud run jobs update "$JOB_FULL" --region="$REGION" \
-            --image="${{ steps.prev.outputs.full_prev }}"
+            --image="${{ steps.prev.outputs.full_prev }}" --max-retries=0
           gcloud run jobs update "$JOB_GAMEDAY" --region="$REGION" \
-            --image="${{ steps.prev.outputs.gameday_prev }}"
+            --image="${{ steps.prev.outputs.gameday_prev }}" --max-retries=0
           echo "Reverted -- full: ${{ steps.prev.outputs.full_prev }}"
           echo "Reverted -- gameday: ${{ steps.prev.outputs.gameday_prev }}"
           exit 1
@@ -201,6 +211,7 @@ jobs:
           echo "- New digest: \`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Previous (full):    \`${{ steps.prev.outputs.full_prev }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Previous (gameday): \`${{ steps.prev.outputs.gameday_prev }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- max-retries: 0 on both jobs" >> "$GITHUB_STEP_SUMMARY"
           echo "- line_snapshots: ${{ steps.before.outputs.snap }} -> ${{ steps.after.outputs.snap }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- curated.games:  ${{ steps.before.outputs.games }} -> ${{ steps.after.outputs.games }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- curated.plays:  ${{ steps.before.outputs.plays }} -> ${{ steps.after.outputs.plays }}" >> "$GITHUB_STEP_SUMMARY"

@@ -80,6 +80,25 @@ plan don't match what's actually deployed):
 
 **No grant needed. No command written for Matt on this stage.**
 
+## Security note — `terraform-ci`'s role, not a blocker but worth recording
+
+`terraform-ci` holds `roles/editor` *and* `roles/iam.securityAdmin` project-wide, and it's
+the only account any GitHub Actions workflow in this repo can impersonate (it's the sole
+`roles/iam.workloadIdentityUser` binding on the WIF pool). That was a reasonable shape when
+it existed only to run Terraform. It now also builds/pushes every container image and
+updates/runs Cloud Run jobs and services for three separate deploy workflows — a much
+larger blast radius riding on the same identity, and `iam.securityAdmin` is the sharp edge:
+it can rewrite project IAM policy, including granting itself more access. A compromised PR
+or a leaked WIF trust boundary on this repo is therefore a path to persistent owner-level
+control, not just "can redeploy things." The WIF attribute condition scopes this to
+`matt9999nfl/nfl-prediction-app` specifically, which bounds it somewhat. Not fixing this
+now — it's an IAM change, out of this stage's scope, and nothing found suggests it's been
+exploited — but recorded in `STATE.md`'s background list so it doesn't sit unrecorded for
+years. Suggested shape when someone picks it up: a narrow deploy-only service account
+(`roles/run.admin` + `roles/artifactregistry.writer`, no `securityAdmin`) for the three
+deploy workflows, with `terraform-ci`'s current broad grant kept only for actual
+`terraform apply` runs.
+
 ## What has to be true before the first dispatch
 
 1. `secrets.WIF_PROVIDER` and `secrets.WIF_SERVICE_ACCOUNT` are already configured on this
@@ -87,14 +106,11 @@ plan don't match what's actually deployed):
 2. This file must be on `main` for `workflow_dispatch` to be dispatchable from the Actions
    tab / `gh workflow run` (GitHub only lists dispatchable workflows that exist on the
    default branch). Not yet pushed — see below.
-3. **Not required for correctness, but worth doing first:** the Cloud Run retry-policy fix
-   from B1-2a (`--max-retries=0` on both jobs, still queued for the Monday attended window)
-   is orthogonal to this workflow's own kill-switch — the workflow's revert path is
-   correct either way — but while `maxRetries` is still 3, a first dispatch that hits a
-   genuine failure will take up to ~48 minutes to report it (Cloud Run's own retries run
-   to completion before `gcloud run jobs execute --wait` returns), not the few minutes a
-   clean or a fast-failing run would take. Landing the retry-policy fix first makes a bad
-   first dispatch fail in ~1 minute instead of ~48.
+3. Nothing else. `--max-retries=0` is now folded into the "Repoint both jobs" step itself
+   (and the revert step), so the Monday-queued manual `gcloud run jobs update --max-retries=0`
+   is no longer a separate prerequisite — dispatching this workflow applies it as part of
+   the same repoint that sets the digest. The last manual gcloud step B1-2a left queued is
+   gone; a first dispatch through this workflow is now push + dispatch, nothing else.
 4. First dispatch should happen outside a scheduled window (the workflow enforces this
    itself, but choosing a deliberate time avoids wasting a dispatch to the guard).
 
