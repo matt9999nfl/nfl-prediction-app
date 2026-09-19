@@ -63,7 +63,7 @@ dataset.
 | B1-2c | Harden `pipeline-deploy.yml` — timeout, revert-on-cancel, window buffer, `.dockerignore` | first dispatch | **done 2026-09-19** (`d4329fd`) |
 | B1-2d | Narrow `terraform-ci` and scope the WIF binding | — | not started |
 | B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **ready — one dispatch** |
-| B1-3c | **Start capturing** injury + depth-chart snapshots daily (clock, no features) | B1-3 | **done 2026-09-19** (code+Terraform written, not yet deployed) |
+| B1-3c | **Start capturing** injury + depth-chart snapshots daily (clock, no features) | B1-3 | **done 2026-09-19** (`c7b5ead`, code+Terraform — not yet deployed) |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
 | B1-3r | Refetch depth charts — the staged file has no 2025 rows | part of B1-3, bucket 2 | not started |
 | B1-4 | Inactives capture at T-90min (store now, use later) | nothing, but has a clock | not started |
