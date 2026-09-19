@@ -18,6 +18,13 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Sized to the real work, not GitHub's 6-hour default: checkout/auth/setup (~1-2min)
+    # + docker build with the r-base apt install (~2-4min) + push (~1-2min) + repoint
+    # (instant) + the verification run, which has historically taken ~12min (QUESTIONS.md,
+    # 2026-09-18). Worst case observed so far is ~20-25min end to end; 30 leaves headroom
+    # without leaving the 6-hour default in place, which is what let a hang keep both jobs
+    # pinned to an unverified digest with no revert (defect A).
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -47,12 +54,20 @@ jobs:
           now_dow=$(date -u +%u)                                  # 1=Mon .. 7=Sun
           now_week_min=$(( (now_dow - 1) * 1440 + 10#$(date -u +%H) * 60 + 10#$(date -u +%M) ))
 
-          # "dow hh:mm minutes_before minutes_after"
+          # "dow hh:mm minutes_before minutes_after" -- minutes_before is 90, not the
+          # 30min human rule referenced above. That 30min measured dispatch-to-start;
+          # this guard needs to measure dispatch-to-FINISH, because the workflow itself
+          # now runs ~20-25min end to end (build + push + repoint + the verification
+          # run). A 30min buffer in front of a ~25min workflow is exactly the
+          # 2026-09-18 incident's arithmetic error repeated here (QUESTIONS.md: the
+          # estimate was wrong because it was benchmarked against the old code's run
+          # time, not the new one's) -- 90 clears the workflow's own worst-case runtime
+          # with real margin instead of repeating that mistake.
           windows=(
-            "1 05:00 30 60"
-            "2 07:00 30 60"
-            "2 11:00 30 240"
-            "5 05:00 30 60"
+            "1 05:00 90 60"
+            "2 07:00 90 60"
+            "2 11:00 90 240"
+            "5 05:00 90 60"
           )
 
           blocked=0
@@ -188,8 +203,13 @@ jobs:
       # recorded in the "Record previous digests" step, and the workflow fails loud.
       # No retry, no "explain it away" -- matches PROMPT-DEPLOY-DATA-PIPELINE.md and
       # the fix-pipeline-iam-and-retry kill-switch.
+      # always() + outcome != 'success' (not outcome == 'failure') so a cancelled or
+      # timed-out verify step still reverts -- outcome == 'failure' alone lets a hang
+      # skip this step entirely and leave both jobs pinned to an unverified digest
+      # (defect A). continue-on-error on the verify step stays: it's what keeps this
+      # step from being skipped after an ordinary failure in the first place.
       - name: Revert to previous digest on verification failure
-        if: steps.verify.outcome == 'failure'
+        if: always() && steps.verify.outcome != 'success'
         run: |
           echo "::error::Verification run failed -- reverting both jobs to their previous digest."
           # max-retries=0 stays regardless of which digest ends up deployed -- the

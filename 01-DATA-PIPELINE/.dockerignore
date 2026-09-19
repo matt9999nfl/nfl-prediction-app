@@ -1,0 +1,15 @@
+# Keep the `docker build` context (and the resulting image) to just the pipeline
+# code. Mirrors `.gcloudignore` in this same directory -- `docker build` (used by
+# .github/workflows/pipeline-deploy.yml) does not read `.gcloudignore`, only this
+# file. Keep the two in sync; a pattern added to one without the other reopens
+# INC-002 (2026-09-07) for that path.
+
+# 29 MB of staged parquet. These are loaded to BigQuery by
+# new_sources_staging/load_to_bigquery.py, which is run manually — the scheduled
+# job never reads them, so they have no business in the image.
+new_sources_staging/
+
+__pycache__/
+*.pyc
+*.log
+.git/
