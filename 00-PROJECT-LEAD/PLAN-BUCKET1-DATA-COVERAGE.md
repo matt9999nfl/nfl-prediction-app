@@ -63,7 +63,7 @@ dataset.
 | B1-2c | Harden `pipeline-deploy.yml` — timeout, revert-on-cancel, window buffer, `.dockerignore` | first dispatch | **done 2026-09-19** (`d4329fd`) |
 | B1-2d | Narrow `terraform-ci` and scope the WIF binding | — | not started |
 | B1-2e | Terraform image ownership — make `terraform apply` safe (DP-R-13) | safe ops | **done 2026-09-19** (`69436f5`, plan-verified, not applied) |
-| B1-7 | Python tests in CI — no Python test has ever run in CI | trust in every handoff | **done 2026-09-19** (581/814 enforced — see QUESTIONS.md for the rest) |
+| B1-7 | Python tests in CI — no Python test has ever run in CI | trust in every handoff | **done 2026-09-19** (`5428cd8`, 581/814 enforced — see QUESTIONS.md for the rest) |
 | B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **ready — one dispatch** |
 | B1-3c | **Start capturing** injury + depth-chart snapshots daily (clock, no features) | B1-3 | **done 2026-09-19** (`c7b5ead`, code+Terraform — not yet deployed) |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
