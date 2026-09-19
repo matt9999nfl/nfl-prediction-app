@@ -59,7 +59,9 @@ dataset.
 |---|---|---|---|
 | B1-1 | Load the 14 staged sources to BigQuery | B1-3, all of bucket 2 | not started |
 | B1-2a | Fix the `raw_lines` IAM grant, the unreadable-table crash, and the retry policy | B1-2 | prompt written |
-| B1-2b | Move the pipeline deploy into GitHub Actions (WIF already exists) | — | prompt written |
+| B1-2b | Move the pipeline deploy into GitHub Actions (WIF already exists) | — | landed `dcf7c8a`/`91ab923` |
+| B1-2c | Harden `pipeline-deploy.yml` — timeout, revert-on-cancel, window buffer, `.dockerignore` | first dispatch | prompt written |
+| B1-2d | Narrow `terraform-ci` and scope the WIF binding | — | not started |
 | B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **blocked on B1-2a** |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
 | B1-4 | Inactives capture at T-90min (store now, use later) | nothing, but has a clock | not started |
@@ -148,6 +150,28 @@ permanently and makes every future pipeline deploy schedulable.
 Either sequence works: land B1-2 manually first and build the workflow after, or build the
 workflow and let it perform B1-2. The second costs more up front and ends the manual-deploy
 problem; the first gets line capture running sooner. Matt's call.
+
+## B1-2c — Harden the workflow before the first dispatch
+
+**Written: `PROMPT-HARDEN-PIPELINE-WORKFLOW.md`** (2026-09-19). Three defects, all verified
+against the file: the revert step does not fire on cancel or timeout and the job has no
+`timeout-minutes`; the scheduled-window guard's 30-minute buffer is shorter than the
+workflow's own ~25-minute runtime (the 2026-09-18 arithmetic error in a new place); and
+`docker build` does not read `.gcloudignore`, so the 29MB of staged parquet that INC-002
+deliberately excluded is baked back into the production image.
+
+## B1-2d — Narrow `terraform-ci` and scope the WIF binding
+
+Not yet prompted. `terraform-ci` is the only identity any GitHub Actions workflow in this
+repo can impersonate, and it holds `roles/editor` **and** `roles/iam.securityAdmin`
+project-wide. `securityAdmin` can rewrite project IAM policy, so that identity can grant
+itself anything — and `setup_wif.bat`'s attribute condition is scoped to the repository with
+no branch or environment constraint, so any workflow run in the repo can mint a token for it.
+
+That was defensible when it only ran Terraform. It now backs three deploy workflows. The fix
+is a dedicated service account for the pipeline deploy holding only Cloud Run job and
+image-push roles, plus a branch or environment condition on the WIF binding. This is a real
+stage, not a background item — background items in `STATE.md` have gone months untouched.
 
 ## B1-2 — Rebuild the data-pipeline image
 
