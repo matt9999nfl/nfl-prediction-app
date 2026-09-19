@@ -57,16 +57,23 @@ dataset.
 
 | Stage | What | Blocks | Status |
 |---|---|---|---|
-| B1-1 | Load the 14 staged sources to BigQuery | B1-3, all of bucket 2 | not started |
-| B1-2a | Fix the `raw_lines` IAM grant, the unreadable-table crash, and the retry policy | B1-2 | prompt written |
+| B1-1 | Load the 13 staged sources to BigQuery | B1-3, all of bucket 2 | **done 2026-09-18** |
+| B1-2a | Fix the `raw_lines` IAM grant, the unreadable-table crash, and the retry policy | B1-2 | **done 2026-09-19** (`abb0b9f`, grant live, retry folded into `91ab923`) |
 | B1-2b | Move the pipeline deploy into GitHub Actions (WIF already exists) | — | landed `dcf7c8a`/`91ab923` |
-| B1-2c | Harden `pipeline-deploy.yml` — timeout, revert-on-cancel, window buffer, `.dockerignore` | first dispatch | prompt written |
+| B1-2c | Harden `pipeline-deploy.yml` — timeout, revert-on-cancel, window buffer, `.dockerignore` | first dispatch | **done 2026-09-19** (`d4329fd`) |
 | B1-2d | Narrow `terraform-ci` and scope the WIF binding | — | not started |
-| B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **blocked on B1-2a** |
+| B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **ready — one dispatch** |
+| B1-3c | **Start capturing** injury + depth-chart snapshots daily (clock, no features) | B1-3 | **done 2026-09-19** (code+Terraform written, not yet deployed) |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
+| B1-3r | Refetch depth charts — the staged file has no 2025 rows | part of B1-3, bucket 2 | not started |
 | B1-4 | Inactives capture at T-90min (store now, use later) | nothing, but has a clock | not started |
 | B1-5 | Multiple prediction runs per game, graded by decision time | — | not started |
 | B1-6 | Referee crew assignments | — | not started |
+
+**Three unrecoverable clocks, not one.** Line capture (B1-2), inactives (B1-4) and
+intra-week injury/depth-chart snapshots (B1-3c) all record state that no archive sells and
+that cannot be backfilled. Only B1-2 is about to start. The capture halves of B1-3 and B1-4
+are small and depend on nothing — they should run ahead of the feature work, not after it.
 
 **Every stage returns a handoff.** Per the root `CLAUDE.md`: on finishing, write
 `00-PROJECT-LEAD/HANDOFF-<date>-<slug>.md` whose first line says whether the goal was
@@ -188,6 +195,30 @@ Note for whoever picks it up: `snapshot_lines.py` is honest that nflverse publis
 `spread_line` and no opening line, and that the earliest the pipeline looks is Tue 11:00
 UTC — hence `home_spread_first_seen`, not `home_spread_open`. Real intra-week movement
 needs a timestamped odds feed, which is the Matt decision listed under B1-3.
+
+## B1-3c — Start capturing injury + depth-chart snapshots
+
+**Written: `PROMPT-CAPTURE-INJURY-SNAPSHOTS.md`** (2026-09-19). A separate Cloud Run job
+(`nfl-injury-capture`, its own service account and schedule) from `nfl-pipeline-full`/
+`gameday` on purpose — design point 1 of the prompt: the pipeline shares nothing at
+runtime with a capture whose only job is to never miss a day. Fetches `nfl_data_py`'s
+`import_injuries`/`import_depth_charts` daily at 08:00 UTC (one hour after nflverse's own
+daily refresh) and appends only rows that are new or changed since the last capture, into
+a new `raw_roster_snapshots` dataset (`injury_report_snapshots`, `depth_chart_snapshots`).
+
+Confirmed against a live fetch (not just the archive) that all three traps the prompt
+named are still live: `report_status` uses the literal string `"None"` for roughly half of
+rows; `date_modified` can be null; a player can hold more than one simultaneous
+`depth_position` in a week. `depth_position` is part of the row's identity key for exactly
+that reason. A capture failure surfaces as a new §3d check in `validate_and_report.py`
+(same pattern as line_snapshots' §3c), not a crash and not only a log line.
+
+**Not yet deployed.** Code and Terraform only, per scope. Before the first capture runs:
+Matt applies the new Terraform resources (service account, IAM grants, the Cloud Run job,
+the Cloud Scheduler entry — `05-DEVOPS/infra/terraform/{iam,jobs,scheduler}.tf`) with
+`-target` flags, not a blanket `apply` — Terraform has already drifted from the digest-pinned
+jobs (STATE.md, DP-R-13), and a blanket apply right now would revert those pins as a side
+effect of adding this SA.
 
 ## B1-3 — Timestamped observation layer, and the first time-varying features
 

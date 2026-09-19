@@ -18,6 +18,10 @@ from scripts.line_snapshot_freshness import (
     LINE_SNAPSHOT_MAX_AGE_DAYS,
     evaluate_line_snapshot_freshness,
 )
+from scripts.roster_snapshot_freshness import (
+    ROSTER_SNAPSHOT_MAX_AGE_DAYS,
+    evaluate_roster_snapshot_freshness,
+)
 
 REPORT_PATH = Path(__file__).parent.parent / "VALIDATION_REPORT.md"
 
@@ -69,6 +73,35 @@ def fetch_line_snapshot_status(client, now: datetime | None = None) -> tuple[boo
     n_rows = int(sf["n_rows"])
     latest = sf["latest"]
     ok, age_txt = evaluate_line_snapshot_freshness(n_rows, latest, now)
+    return ok, f"{n_rows:,} row(s) total, latest capture {age_txt}", None
+
+
+def fetch_roster_snapshot_status(
+    client, table: str, now: datetime | None = None,
+) -> tuple[bool, str, str | None]:
+    """
+    Same pattern as fetch_line_snapshot_status, for one of the two
+    raw_roster_snapshots tables (PROMPT-CAPTURE-INJURY-SNAPSHOTS.md). Never
+    raises: an unreadable table (missing IAM grant, capture job never
+    deployed, wrong project) is a FAILED check with the query error attached,
+    not a crashed report -- this is a separately-scheduled job from the main
+    pipeline (design point 1), so its own failures must not be able to take
+    this report down either.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    try:
+        freshness = run_query(client, f"""
+            SELECT COUNT(*) AS n_rows, MAX(captured_at) AS latest
+            FROM `{PROJECT}.raw_roster_snapshots.{table}`
+        """)
+    except Exception as exc:
+        return False, "query failed", str(exc)
+
+    f = freshness.iloc[0]
+    n_rows = int(f["n_rows"])
+    latest = f["latest"]
+    ok, age_txt = evaluate_roster_snapshot_freshness(n_rows, latest, now)
     return ok, f"{n_rows:,} row(s) total, latest capture {age_txt}", None
 
 
@@ -377,6 +410,42 @@ table fail the run visibly, in the report, instead of crashing the process.
             "\"SNAPSHOT_FAILED\", and confirm the deployed `nfl-data-pipeline` "
             "image was built after that commit."
         )
+
+    # ------------------------------------------------------------------ #
+    # 3d. Roster snapshot freshness (injuries + depth charts)               #
+    # ------------------------------------------------------------------ #
+    h("3d. Roster Snapshot Freshness (Injuries + Depth Charts)")
+    row("""
+`raw_roster_snapshots.{injury_report_snapshots,depth_chart_snapshots}` are
+written by `capture_injury_snapshots.py`, running as its own Cloud Run job on
+its own daily schedule -- not inside this pipeline (PROMPT-CAPTURE-INJURY-
+SNAPSHOTS.md, design point 1). Checking their freshness here, from a job that
+never writes them, is deliberate: it is the same "loud in the report, not just
+a log line" pattern line_snapshots uses (3c), applied to a capture that this
+pipeline has no way to make happen itself.
+""")
+    for table, label in (
+        ("injury_report_snapshots", "injury_report_snapshots"),
+        ("depth_chart_snapshots", "depth_chart_snapshots"),
+    ):
+        ok, summary, error = fetch_roster_snapshot_status(client, table)
+        all_pass &= check(ok, f"roster_snapshot_freshness_{table}", check_results)
+        row(f"- `{label}`: {summary}  {'✅' if ok else '❌'}")
+        if error:
+            row(
+                f"\n  **ERROR:** could not query `{PROJECT}.raw_roster_snapshots.{table}`: {error}\n"
+                "  Likely a missing BigQuery IAM grant for the pipeline's service account on "
+                "`raw_roster_snapshots` (write it up for Matt to apply -- see "
+                "05-DEVOPS/infra/terraform/iam.tf), or the capture job's own Cloud Run job/"
+                "scheduler was never deployed (05-DEVOPS/infra/terraform/jobs.tf, scheduler.tf)."
+            )
+        elif not ok:
+            row(
+                f"\n  **ERROR:** no `{label}` row captured in the last "
+                f"{ROSTER_SNAPSHOT_MAX_AGE_DAYS} days (or the table is empty). Check the "
+                "`nfl-injury-capture` Cloud Run job's own execution logs -- this pipeline "
+                "does not run that capture and cannot see why it stopped, only that it has."
+            )
 
     # ------------------------------------------------------------------ #
     # 4. Integrity checks                                                  #

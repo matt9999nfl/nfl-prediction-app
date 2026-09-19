@@ -30,6 +30,18 @@ resource "google_service_account" "terraform_ci" {
   description  = "Service account used by GitHub Actions to apply Terraform"
 }
 
+# Its own service account, not nfl-pipeline-sa (PROMPT-CAPTURE-INJURY-
+# SNAPSHOTS.md, design point 1): this capture must not share fate with the
+# pipeline. Scoping its credentials separately means a pipeline-sa IAM
+# problem (like the raw_lines gap that crash-looped nfl-pipeline-full for a
+# week, QUESTIONS.md 2026-09-18) cannot also take this capture down, and vice
+# versa.
+resource "google_service_account" "injury_capture" {
+  account_id   = "nfl-injury-capture-sa"
+  display_name = "NFL Prediction App — Injury/Depth-Chart Snapshot Capture"
+  description  = "Service account for the daily injury+depth-chart snapshot Cloud Run job"
+}
+
 # ── API Service Account IAM Roles ──────────────────────────────────────────────
 
 # BigQuery roles
@@ -212,4 +224,51 @@ resource "google_project_iam_member" "terraform_ci_security_admin" {
   project = var.project_id
   role    = "roles/iam.securityAdmin"
   member  = "serviceAccount:${google_service_account.terraform_ci.email}"
+}
+
+# ── Injury/Depth-Chart Capture Service Account IAM Roles ───────────────────
+#
+# WRITTEN, NOT APPLIED (PROMPT-CAPTURE-INJURY-SNAPSHOTS.md kill-switch: a new
+# dataset needing an IAM grant is exactly the 2026-09-18 raw_lines lesson --
+# write the command, don't run it). Matt applies this, same as every other
+# IAM change in this repo (05-DEVOPS/instructions.md rule 6).
+#
+# CAUTION before running `terraform apply` for this: Terraform has already
+# drifted from live on the *existing* jobs (this file and jobs.tf still
+# declare `:latest`/stale timeout+memory for resources that have since been
+# pinned to specific digests outside Terraform -- STATE.md, DP-R-13,
+# unfixed). A blanket `apply` right now would revert those digest pins as a
+# side effect of adding this SA. Apply only the new resources below by name
+# (`terraform apply -target=google_service_account.injury_capture
+# -target=google_bigquery_dataset_iam_member.injury_capture_editor_roster_snapshots
+# -target=google_project_iam_member.injury_capture_job_user
+# -target=google_bigquery_dataset_iam_member.pipeline_reader_roster_snapshots
+# -target=google_cloud_run_v2_job.injury_capture
+# -target=google_cloud_run_v2_job_iam_member.injury_capture_invoke_self
+# -target=google_cloud_scheduler_job.injury_capture_daily`), or fix DP-R-13
+# first and reconcile the rest of the drift in the same sitting.
+
+# Write access to the new capture tables.
+resource "google_bigquery_dataset_iam_member" "injury_capture_editor_roster_snapshots" {
+  dataset_id = "raw_roster_snapshots"
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.injury_capture.email}"
+}
+
+# Required to run BigQuery load/query jobs at all.
+resource "google_project_iam_member" "injury_capture_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.injury_capture.email}"
+}
+
+# nfl-pipeline-sa needs read access to the new dataset too: validate_and_
+# report.py's new §3d freshness check runs inside the main pipeline job
+# (under nfl-pipeline-sa), not inside this capture job, by design -- it is
+# checking a table it never writes (PROMPT-CAPTURE-INJURY-SNAPSHOTS.md,
+# design point 1; see validate_and_report.py §3d for why that's deliberate).
+resource "google_bigquery_dataset_iam_member" "pipeline_reader_roster_snapshots" {
+  dataset_id = "raw_roster_snapshots"
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.pipeline.email}"
 }
