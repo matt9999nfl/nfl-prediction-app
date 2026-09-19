@@ -59,6 +59,7 @@ dataset.
 |---|---|---|---|
 | B1-1 | Load the 14 staged sources to BigQuery | B1-3, all of bucket 2 | not started |
 | B1-2a | Fix the `raw_lines` IAM grant, the unreadable-table crash, and the retry policy | B1-2 | prompt written |
+| B1-2b | Move the pipeline deploy into GitHub Actions (WIF already exists) | — | prompt written |
 | B1-2 | Rebuild the data-pipeline image so line capture runs | nothing, but has a clock | **blocked on B1-2a** |
 | B1-3 | Timestamped observation layer + the first time-varying features | B1-5 | not started |
 | B1-4 | Inactives capture at T-90min (store now, use later) | nothing, but has a clock | not started |
@@ -127,6 +128,26 @@ Tuesday pair (full rebuild 11:00 UTC, production refresh 14:00 UTC) is the versi
 matters: a rebuild that overruns into the refresh gives picks built from a half-rebuilt
 `curated.plays`, with no crash and no alert. Fixing the retry policy shrinks the odds; it
 does not make mutual exclusion unnecessary. Raise this again once B1-2 has landed.
+
+## B1-2b — Move the pipeline deploy into GitHub Actions
+
+**Written: `PROMPT-CI-PIPELINE-DEPLOY.md`** (2026-09-19). Added after Matt asked for these
+runs to be scheduled and unattended rather than run by hand.
+
+The blocker was never permissions. Every GCP action in this project authenticates as Matt's
+personal account, so every GCP action needs something running in his Windows profile — the
+Cowork workspace on that machine has `git` but no `gcloud` and no `bq` (checked 2026-09-19),
+and a cloud session has neither. No scheduled task of any kind can deploy this pipeline.
+
+But `api-deploy.yml` already authenticates to GCP through Workload Identity Federation and
+pushes images to `gcr.io`, and `setup_wif.bat` created the provider. The federation, the
+service account and the repo secrets exist and work. The data pipeline is simply the one
+component that never got a workflow. Giving it one removes the laptop from the loop
+permanently and makes every future pipeline deploy schedulable.
+
+Either sequence works: land B1-2 manually first and build the workflow after, or build the
+workflow and let it perform B1-2. The second costs more up front and ends the manual-deploy
+problem; the first gets line capture running sooner. Matt's call.
 
 ## B1-2 — Rebuild the data-pipeline image
 

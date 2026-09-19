@@ -1,0 +1,206 @@
+name: Deploy DATA-PIPELINE
+
+# workflow_dispatch ONLY -- not push. The API and frontend deploy on every push to
+# their paths; the data pipeline must not, because a push at the wrong moment would
+# repoint two Cloud Run JOBS mid-window, one of which (nfl-pipeline-full) drops and
+# rebuilds raw_nflfastr.* as its first act. See PROMPT-CI-PIPELINE-DEPLOY.md and
+# QUESTIONS.md (2026-09-18) for why timing here is load-bearing, not cosmetic.
+on:
+  workflow_dispatch: {}
+
+env:
+  PROJECT_ID: nfl-model-471509
+  REGION: us-central1
+  IMAGE_NAME: nfl-data-pipeline
+  JOB_FULL: nfl-pipeline-full
+  JOB_GAMEDAY: nfl-pipeline-gameday
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Replaces the human timing rule from PROMPT-DEPLOY-DATA-PIPELINE.md ("don't
+      # build or repoint within 30 minutes of a scheduled start, and don't repoint
+      # between Tue 11:00 and 15:00 UTC"). Scheduled jobs (UTC): Mon 05:00
+      # (gameday-sunday), Tue 07:00 (gameday-monday), Tue 11:00 (full rebuild, then
+      # the Tue 14:00 production refresh reads what it produced -- one wide blackout
+      # covers both), Fri 05:00 (gameday-thursday).
+      - name: Refuse to run in a scheduled window
+        run: |
+          set -euo pipefail
+          now_dow=$(date -u +%u)                                  # 1=Mon .. 7=Sun
+          now_week_min=$(( (now_dow - 1) * 1440 + 10#$(date -u +%H) * 60 + 10#$(date -u +%M) ))
+
+          # "dow hh:mm minutes_before minutes_after"
+          windows=(
+            "1 05:00 30 60"
+            "2 07:00 30 60"
+            "2 11:00 30 240"
+            "5 05:00 30 60"
+          )
+
+          blocked=0
+          for w in "${windows[@]}"; do
+            read -r dow hhmm before after <<< "$w"
+            h=${hhmm%%:*}; m=${hhmm##*:}
+            center=$(( (dow - 1) * 1440 + 10#$h * 60 + 10#$m ))
+            # check this week, last week, and next week to handle wraparound at the
+            # week boundary (e.g. a Monday-morning run close to a Friday window).
+            for offset in -10080 0 10080; do
+              c=$(( center + offset ))
+              lo=$(( c - before ))
+              hi=$(( c + after ))
+              if [ "$now_week_min" -ge "$lo" ] && [ "$now_week_min" -le "$hi" ]; then
+                echo "::error::Refusing to deploy: within ${before}min before / ${after}min after a scheduled pipeline run (dow=$dow $hhmm UTC)."
+                blocked=1
+              fi
+            done
+          done
+          if [ "$blocked" -ne 0 ]; then exit 1; fi
+          echo "Timing OK -- outside every scheduled window."
+
+      # A slow or stuck execution overlapping a repoint is exactly what produced the
+      # 2026-09-18 incident (two independently-retrying executions racing on the same
+      # DROP-and-rebuild tables). This check is what a human was previously expected
+      # to do by hand before building or repointing.
+      - name: Refuse to run if either job has an execution in progress
+        run: |
+          set -euo pipefail
+          for job in "$JOB_FULL" "$JOB_GAMEDAY"; do
+            status=$(gcloud run jobs executions list --job="$job" --region="$REGION" \
+              --limit=1 --format="value(status.conditions[0].status)" || echo "")
+            if [ "$status" = "Unknown" ]; then
+              echo "::error::$job has an execution currently in progress (status Unknown). Refusing to deploy."
+              exit 1
+            fi
+          done
+          echo "Neither job has an execution in progress."
+
+      - name: Configure Docker to use gcloud for authentication
+        run: gcloud auth configure-docker
+
+      # Recorded BEFORE anything is touched, so a revert never has to be
+      # reconstructed from GCR tag history the way it was on 2026-09-18 (QUESTIONS.md).
+      - name: Record previous digests
+        id: prev
+        run: |
+          full_prev=$(gcloud run jobs describe "$JOB_FULL" --region="$REGION" \
+            --format='value(spec.template.spec.template.spec.containers[0].image)')
+          gameday_prev=$(gcloud run jobs describe "$JOB_GAMEDAY" --region="$REGION" \
+            --format='value(spec.template.spec.template.spec.containers[0].image)')
+          echo "full_prev=$full_prev" >> "$GITHUB_OUTPUT"
+          echo "gameday_prev=$gameday_prev" >> "$GITHUB_OUTPUT"
+          echo "Previous image -- full:    $full_prev"
+          echo "Previous image -- gameday: $gameday_prev"
+
+      # Mirrors api-deploy.yml's docker-build-in-runner pattern (not gcloud builds
+      # submit / Cloud Build) -- same proven WIF + push path, one fewer permission
+      # surface to reason about. Dockerfile.job, not the default Dockerfile: this
+      # folder has no plain Dockerfile.
+      - name: Build image
+        run: |
+          git_commit=$(git rev-parse --short HEAD)
+          docker build \
+            -f 01-DATA-PIPELINE/Dockerfile.job \
+            -t gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit \
+            01-DATA-PIPELINE/
+
+      # No :latest tag, ever -- the 2026-09-08 image being :latest, silently 10 days
+      # stale, is the original defect this whole stage traces back to (QUESTIONS.md,
+      # 2026-09-18). Only the digest is ever referenced by a job.
+      - name: Push image and resolve its digest
+        id: build
+        run: |
+          git_commit=$(git rev-parse --short HEAD)
+          docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit
+          digest=$(gcloud container images describe \
+            gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}:$git_commit \
+            --format='value(image_summary.digest)')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "New digest: $digest"
+
+      - name: Repoint both jobs to the new digest
+        run: |
+          image="gcr.io/${{ env.PROJECT_ID }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+          gcloud run jobs update "$JOB_FULL" --region="$REGION" --image="$image"
+          gcloud run jobs update "$JOB_GAMEDAY" --region="$REGION" --image="$image"
+
+      - name: Row counts before verification run
+        id: before
+        run: |
+          snap=$(bq query --use_legacy_sql=false --format=csv \
+            "SELECT COUNT(*) FROM \`${{ env.PROJECT_ID }}.raw_lines.line_snapshots\`" | tail -1)
+          games=$(bq query --use_legacy_sql=false --format=csv \
+            "SELECT COUNT(*) FROM \`${{ env.PROJECT_ID }}.curated.games\`" | tail -1)
+          plays=$(bq query --use_legacy_sql=false --format=csv \
+            "SELECT COUNT(*) FROM \`${{ env.PROJECT_ID }}.curated.plays\`" | tail -1)
+          echo "snap=$snap" >> "$GITHUB_OUTPUT"
+          echo "games=$games" >> "$GITHUB_OUTPUT"
+          echo "plays=$plays" >> "$GITHUB_OUTPUT"
+          echo "Before -- line_snapshots: $snap, curated.games: $games, curated.plays: $plays"
+
+      # continue-on-error so the revert step below can run on a failed verification
+      # run instead of the workflow just stopping with the bad digest still pointed at.
+      - name: Execute verification run (nfl-pipeline-gameday)
+        id: verify
+        continue-on-error: true
+        run: gcloud run jobs execute "$JOB_GAMEDAY" --region="$REGION" --wait
+
+      - name: Row counts after verification run
+        id: after
+        if: always()
+        run: |
+          snap=$(bq query --use_legacy_sql=false --format=csv \
+            "SELECT COUNT(*) FROM \`${{ env.PROJECT_ID }}.raw_lines.line_snapshots\`" | tail -1)
+          games=$(bq query --use_legacy_sql=false --format=csv \
+            "SELECT COUNT(*) FROM \`${{ env.PROJECT_ID }}.curated.games\`" | tail -1)
+          plays=$(bq query --use_legacy_sql=false --format=csv \
+            "SELECT COUNT(*) FROM \`${{ env.PROJECT_ID }}.curated.plays\`" | tail -1)
+          echo "snap=$snap" >> "$GITHUB_OUTPUT"
+          echo "games=$games" >> "$GITHUB_OUTPUT"
+          echo "plays=$plays" >> "$GITHUB_OUTPUT"
+          echo "After -- line_snapshots: $snap, curated.games: $games, curated.plays: $plays"
+
+      # Kill-switch: on any verification failure, both jobs go back to the digest
+      # recorded in the "Record previous digests" step, and the workflow fails loud.
+      # No retry, no "explain it away" -- matches PROMPT-DEPLOY-DATA-PIPELINE.md and
+      # the fix-pipeline-iam-and-retry kill-switch.
+      - name: Revert to previous digest on verification failure
+        if: steps.verify.outcome == 'failure'
+        run: |
+          echo "::error::Verification run failed -- reverting both jobs to their previous digest."
+          gcloud run jobs update "$JOB_FULL" --region="$REGION" \
+            --image="${{ steps.prev.outputs.full_prev }}"
+          gcloud run jobs update "$JOB_GAMEDAY" --region="$REGION" \
+            --image="${{ steps.prev.outputs.gameday_prev }}"
+          echo "Reverted -- full: ${{ steps.prev.outputs.full_prev }}"
+          echo "Reverted -- gameday: ${{ steps.prev.outputs.gameday_prev }}"
+          exit 1
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "## Pipeline deploy succeeded" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- New digest: \`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Previous (full):    \`${{ steps.prev.outputs.full_prev }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Previous (gameday): \`${{ steps.prev.outputs.gameday_prev }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- line_snapshots: ${{ steps.before.outputs.snap }} -> ${{ steps.after.outputs.snap }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- curated.games:  ${{ steps.before.outputs.games }} -> ${{ steps.after.outputs.games }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- curated.plays:  ${{ steps.before.outputs.plays }} -> ${{ steps.after.outputs.plays }}" >> "$GITHUB_STEP_SUMMARY"
