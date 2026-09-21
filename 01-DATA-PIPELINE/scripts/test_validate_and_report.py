@@ -43,6 +43,13 @@ RAW_LINES_ERROR = (
     "denied on dataset nfl-model-471509:raw_lines (or it may not exist)."
 )
 
+# A stand-in for google.api_core.exceptions.NotFound, matched by class name
+# only (see _is_dataset_or_table_not_found's docstring in validate_and_report.py)
+# -- built with `type()` instead of importing the real class so this file
+# never depends on `google.api_core` being importable, which other test
+# modules in this folder can break by replacing sys.modules["google"].
+FakeNotFound = type("NotFound", (Exception,), {})
+
 
 # ── fetch_line_snapshot_status(): isolated, no full pipeline needed ──────────
 
@@ -63,6 +70,13 @@ class _FakeJob:
 
     def to_dataframe(self):
         return self._df
+
+
+class _FakeTable:
+    """Stands in for a google.cloud.bigquery.Table -- only `.created` is read."""
+
+    def __init__(self, created):
+        self.created = created
 
 
 class _RowClient:
@@ -109,6 +123,116 @@ def test_empty_table_fails_with_no_error():
     assert error is None
 
 
+# ── fetch_roster_snapshot_status(): the three-states fix ─────────────────────
+#
+# PROMPT-FIX-ROSTER-FRESHNESS-STATES.md (2026-09-21): this is what actually
+# broke B1-2's verification run -- a dataset that has never been deployed
+# (raw_roster_snapshots) failed identically to a genuinely stale capture.
+
+
+class _NotFoundClient:
+    """query() raises NotFound -- the capture job was never deployed."""
+
+    def query(self, sql, *a, **k):
+        raise FakeNotFound("Not found: Dataset ... raw_roster_snapshots was not found")
+
+    def get_table(self, table_ref, *a, **k):
+        raise AssertionError("must not call get_table when the query itself said not-found")
+
+
+class _RosterRowClient:
+    """query() returns a fixed n_rows/latest frame; get_table() (only called
+    when n_rows is 0) reports a fixed creation time."""
+
+    def __init__(self, created, n_rows, latest):
+        self._created = created
+        self._df = pd.DataFrame([{"n_rows": n_rows, "latest": latest}])
+
+    def query(self, sql, *a, **k):
+        return _FakeJob(self._df)
+
+    def get_table(self, table_ref, *a, **k):
+        return _FakeTable(created=self._created)
+
+
+class _RosterGetTableErrorClient:
+    """query() succeeds with zero rows; get_table() -- needed to place that
+    empty table within its creation-time budget -- hits a real access
+    problem instead of "not found"."""
+
+    def __init__(self):
+        self._df = pd.DataFrame([{"n_rows": 0, "latest": None}])
+
+    def query(self, sql, *a, **k):
+        return _FakeJob(self._df)
+
+    def get_table(self, table_ref, *a, **k):
+        raise Exception(RAW_LINES_ERROR)
+
+
+def test_roster_table_absent_passes_as_not_deployed():
+    ok, state, summary, error = var.fetch_roster_snapshot_status(
+        _NotFoundClient(), "injury_report_snapshots", now=NOW
+    )
+    assert ok is True
+    assert state == "not deployed"
+    assert error is None
+
+
+def test_roster_table_empty_and_recent_passes_as_awaiting_first_capture():
+    created = NOW - timedelta(hours=1)
+    ok, state, summary, error = var.fetch_roster_snapshot_status(
+        _RosterRowClient(created, 0, None), "injury_report_snapshots", now=NOW
+    )
+    assert ok is True
+    assert state == "awaiting first capture"
+    assert error is None
+
+
+def test_roster_table_empty_beyond_window_fails_as_stale():
+    created = NOW - timedelta(days=var.ROSTER_SNAPSHOT_MAX_AGE_DAYS + 1)
+    ok, state, summary, error = var.fetch_roster_snapshot_status(
+        _RosterRowClient(created, 0, None), "injury_report_snapshots", now=NOW
+    )
+    assert ok is False
+    assert state == "stale"
+    assert error is None
+
+
+def test_roster_table_with_stale_rows_fails():
+    created = NOW - timedelta(days=60)
+    stale_latest = NOW - timedelta(days=var.ROSTER_SNAPSHOT_MAX_AGE_DAYS + 1)
+    ok, state, summary, error = var.fetch_roster_snapshot_status(
+        _RosterRowClient(created, 100, stale_latest), "injury_report_snapshots", now=NOW
+    )
+    assert ok is False
+    assert state == "stale"
+    assert error is None
+
+
+def test_roster_table_with_fresh_rows_passes():
+    created = NOW - timedelta(days=60)
+    fresh_latest = NOW - timedelta(hours=1)
+    ok, state, summary, error = var.fetch_roster_snapshot_status(
+        _RosterRowClient(created, 100, fresh_latest), "injury_report_snapshots", now=NOW
+    )
+    assert ok is True
+    assert state == "fresh"
+    assert error is None
+
+
+def test_roster_get_table_error_other_than_not_found_is_query_failed():
+    """A real access problem (e.g. missing IAM grant on a table that DOES
+    exist) must still surface as a failure with the error attached -- only
+    "not found" gets the free pass."""
+    ok, state, summary, error = var.fetch_roster_snapshot_status(
+        _RosterGetTableErrorClient(), "injury_report_snapshots", now=NOW
+    )
+    assert ok is False
+    assert state == "query failed"
+    assert error == RAW_LINES_ERROR
+
+
 # ── main() end-to-end: proves the report and all_pass, not just the helper ──
 
 
@@ -122,13 +246,21 @@ class FullPipelineFakeClient:
     trivially-passing data. Only the raw_lines.line_snapshots query varies.
     """
 
-    def __init__(self, line_snapshots="fresh", age_days=0.1, n_rows=10):
+    def __init__(self, line_snapshots="fresh", age_days=0.1, n_rows=10, roster="deployed_fresh"):
         self._mode = line_snapshots  # "fresh" | "stale" | "empty" | "error"
         self._age_days = age_days
         self._n_rows = n_rows
+        self._roster = roster  # "deployed_fresh" | "not_deployed"
 
     def query(self, sql, *a, **k):
         return _RoutingJob(sql, self)
+
+    def get_table(self, table_ref, *a, **k):
+        # Only reached by section 3d when its own query comes back with zero
+        # rows (see fetch_roster_snapshot_status()) -- default "deployed
+        # long ago" keeps that case irrelevant to every section-3c-focused
+        # test, since `roster` defaults to "deployed_fresh" (nonzero rows).
+        return _FakeTable(created=datetime.now(timezone.utc) - timedelta(days=30))
 
 
 class _RoutingJob:
@@ -153,9 +285,12 @@ class _RoutingJob:
             # Section 3d (PROMPT-CAPTURE-INJURY-SNAPSHOTS.md, added 2026-09-19)
             # queries these two tables the same way -- COUNT(*)/MAX(captured_at),
             # unpacked via .iloc[0], which needs exactly one row back even from
-            # a stub. These tests are about section 3c (line snapshots) only,
-            # so always answer "fresh" here regardless of `c._mode` -- otherwise
-            # every section-3c scenario would also have to reason about 3d.
+            # a stub. `roster` defaults to "deployed_fresh" (irrelevant to
+            # `c._mode`) so every section-3c-focused test never has to reason
+            # about 3d; `roster="not_deployed"` exercises the exact B1-2
+            # scenario (PROMPT-FIX-ROSTER-FRESHNESS-STATES.md).
+            if c._roster == "not_deployed":
+                raise FakeNotFound("Not found: Dataset ... raw_roster_snapshots was not found")
             latest = datetime.now(timezone.utc) - timedelta(hours=1)
             return pd.DataFrame([{"n_rows": 10, "latest": latest}])
 
@@ -231,3 +366,22 @@ def test_fresh_snapshot_still_passes_report(tmp_path, monkeypatch):
     assert exit_code is None  # all_pass True -- main() never calls sys.exit
     assert "- line_snapshots_freshness" not in report
     assert "✅ ALL CHECKS PASSED" in report
+
+
+def test_undeployed_roster_capture_does_not_fail_the_report(tmp_path, monkeypatch):
+    """
+    Reproduces the exact 2026-09-21 B1-2 verification failure: `raw_roster_
+    snapshots` doesn't exist because `nfl-injury-capture` (B1-3c) has never
+    been deployed. Before this fix, `all_pass` went False and the process
+    exited 1 purely because of that -- with everything else (including line
+    snapshots) healthy. It must not do that anymore.
+    """
+    exit_code, report = _run_and_capture(
+        FullPipelineFakeClient(line_snapshots="fresh", roster="not_deployed"),
+        tmp_path, monkeypatch,
+    )
+    assert exit_code is None  # all_pass True -- main() never calls sys.exit
+    assert "✅ ALL CHECKS PASSED" in report
+    assert "❌ SOME CHECKS FAILED" not in report
+    assert "**Failed checks:**" not in report  # nothing failed at all
+    assert "**not deployed**" in report

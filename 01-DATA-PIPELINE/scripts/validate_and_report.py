@@ -76,33 +76,90 @@ def fetch_line_snapshot_status(client, now: datetime | None = None) -> tuple[boo
     return ok, f"{n_rows:,} row(s) total, latest capture {age_txt}", None
 
 
+def _is_dataset_or_table_not_found(exc: Exception) -> bool:
+    """
+    True when a BigQuery failure means "this dataset or table does not
+    exist" (`google.api_core.exceptions.NotFound` in production), as
+    opposed to some other failure (missing IAM grant, network error) at the
+    same call site.
+
+    Matched by exception class name rather than
+    `isinstance(exc, google.api_core.exceptions.NotFound)`: some of this
+    repo's other test modules (test_snapshot_lines.py,
+    test_capture_injury_snapshots.py) replace `sys.modules["google"]`
+    wholesale to stub out `google.cloud.bigquery` without credentials,
+    which breaks a plain `from google.api_core.exceptions import NotFound`
+    whenever those modules are collected first in the same pytest session.
+    Name-matching sidesteps that without touching those other tests, which
+    are out of this stage's scope.
+    """
+    return type(exc).__name__ == "NotFound"
+
+
 def fetch_roster_snapshot_status(
     client, table: str, now: datetime | None = None,
-) -> tuple[bool, str, str | None]:
+) -> tuple[bool, str, str, str | None]:
     """
     Same pattern as fetch_line_snapshot_status, for one of the two
     raw_roster_snapshots tables (PROMPT-CAPTURE-INJURY-SNAPSHOTS.md). Never
-    raises: an unreadable table (missing IAM grant, capture job never
-    deployed, wrong project) is a FAILED check with the query error attached,
-    not a crashed report -- this is a separately-scheduled job from the main
-    pipeline (design point 1), so its own failures must not be able to take
-    this report down either.
+    raises: an unreadable table (missing IAM grant, wrong project) is a
+    FAILED check with the query error attached, not a crashed report --
+    this is a separately-scheduled job from the main pipeline (design point
+    1), so its own failures must not be able to take this report down
+    either.
+
+    PROMPT-FIX-ROSTER-FRESHNESS-STATES.md (2026-09-21): "the dataset/table
+    doesn't exist" is distinguished from every other query failure -- it
+    means "the capture job was never deployed", not "something is broken",
+    and must not be reported the same way a real query failure is. When the
+    table exists but is empty, its creation time (BigQuery exposes this via
+    get_table()) tells apart "just deployed, awaiting its first capture"
+    from "has existed too long with nothing in it" -- see
+    roster_snapshot_freshness.py for the age budget used for both.
+
+    Returns (ok, state, summary, query_error):
+      ok           -- whether this check should count as a PASS
+      state        -- one of "not deployed", "awaiting first capture",
+                       "stale", "fresh" (see roster_snapshot_freshness.py)
+      summary      -- one-line description for the report row
+      query_error  -- the exception text if a query failed for a reason
+                       other than "table not found", else None
     """
     if now is None:
         now = datetime.now(timezone.utc)
+    table_ref = f"{PROJECT}.raw_roster_snapshots.{table}"
+
     try:
         freshness = run_query(client, f"""
             SELECT COUNT(*) AS n_rows, MAX(captured_at) AS latest
-            FROM `{PROJECT}.raw_roster_snapshots.{table}`
+            FROM `{table_ref}`
         """)
     except Exception as exc:
-        return False, "query failed", str(exc)
+        if _is_dataset_or_table_not_found(exc):
+            ok, state, detail = evaluate_roster_snapshot_freshness(
+                table_exists=False, n_rows=0, latest=None, now=now,
+            )
+            return ok, state, detail, None
+        return False, "query failed", "query failed", str(exc)
 
     f = freshness.iloc[0]
     n_rows = int(f["n_rows"])
     latest = f["latest"]
-    ok, age_txt = evaluate_roster_snapshot_freshness(n_rows, latest, now)
-    return ok, f"{n_rows:,} row(s) total, latest capture {age_txt}", None
+
+    table_created = None
+    if n_rows == 0:
+        # Only needed to place an empty table within its creation-time
+        # budget -- skip the extra call when there are rows to judge by.
+        try:
+            table_created = client.get_table(table_ref).created
+        except Exception as exc:
+            return False, "query failed", "query failed", str(exc)
+
+    ok, state, detail = evaluate_roster_snapshot_freshness(
+        table_exists=True, n_rows=n_rows, latest=latest, now=now,
+        table_created=table_created,
+    )
+    return ok, state, f"{n_rows:,} row(s) total, {detail}", None
 
 
 def check(condition: bool, label: str, results: list) -> bool:
@@ -423,28 +480,37 @@ SNAPSHOTS.md, design point 1). Checking their freshness here, from a job that
 never writes them, is deliberate: it is the same "loud in the report, not just
 a log line" pattern line_snapshots uses (3c), applied to a capture that this
 pipeline has no way to make happen itself.
+
+Three states are distinguished, not one (PROMPT-FIX-ROSTER-FRESHNESS-STATES.md,
+2026-09-21): **not deployed** (the dataset/table doesn't exist -- the capture
+job simply hasn't been rolled out yet, not a failure), **awaiting first
+capture** (deployed, table exists, no rows yet, but not long enough to expect
+one -- not a failure yet), and **stale** (rows exist but the newest is too
+old, or the table has existed too long with none at all -- this is the one
+real failure, and it still fails this report and the run's exit code).
 """)
     for table, label in (
         ("injury_report_snapshots", "injury_report_snapshots"),
         ("depth_chart_snapshots", "depth_chart_snapshots"),
     ):
-        ok, summary, error = fetch_roster_snapshot_status(client, table)
+        ok, state, summary, error = fetch_roster_snapshot_status(client, table)
         all_pass &= check(ok, f"roster_snapshot_freshness_{table}", check_results)
-        row(f"- `{label}`: {summary}  {'✅' if ok else '❌'}")
+        row(f"- `{label}`: **{state}** -- {summary}  {'✅' if ok else '❌'}")
         if error:
             row(
                 f"\n  **ERROR:** could not query `{PROJECT}.raw_roster_snapshots.{table}`: {error}\n"
                 "  Likely a missing BigQuery IAM grant for the pipeline's service account on "
                 "`raw_roster_snapshots` (write it up for Matt to apply -- see "
-                "05-DEVOPS/infra/terraform/iam.tf), or the capture job's own Cloud Run job/"
-                "scheduler was never deployed (05-DEVOPS/infra/terraform/jobs.tf, scheduler.tf)."
+                "05-DEVOPS/infra/terraform/iam.tf). The table exists (this isn't the "
+                "not-deployed case) but couldn't be read."
             )
-        elif not ok:
+        elif not ok and state == "stale":
             row(
                 f"\n  **ERROR:** no `{label}` row captured in the last "
-                f"{ROSTER_SNAPSHOT_MAX_AGE_DAYS} days (or the table is empty). Check the "
-                "`nfl-injury-capture` Cloud Run job's own execution logs -- this pipeline "
-                "does not run that capture and cannot see why it stopped, only that it has."
+                f"{ROSTER_SNAPSHOT_MAX_AGE_DAYS} days (or the table has existed longer than "
+                f"that with none at all). Check the `nfl-injury-capture` Cloud Run job's own "
+                "execution logs -- this pipeline does not run that capture and cannot see why "
+                "it stopped, only that it has."
             )
 
     # ------------------------------------------------------------------ #
